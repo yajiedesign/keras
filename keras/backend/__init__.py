@@ -34,7 +34,7 @@ if os.path.exists(_config_path):
     _epsilon = _config.get('epsilon', epsilon())
     assert isinstance(_epsilon, float)
     _backend = _config.get('backend', _BACKEND)
-    assert _backend in {'theano', 'tensorflow'}
+    assert _backend in {'theano', 'tensorflow', 'mxnet'}
     _image_dim_ordering = _config.get('image_dim_ordering',
                                       image_dim_ordering())
     assert _image_dim_ordering in {'tf', 'th'}
@@ -65,6 +65,9 @@ if _BACKEND == 'theano':
 elif _BACKEND == 'tensorflow':
     sys.stderr.write('Using TensorFlow backend.\n')
     from .tensorflow_backend import *
+elif _BACKEND == 'mxnet':
+    sys.stderr.write('Using MXNet backend.\n')
+    from .mxnet_backend import *
 else:
     raise ValueError('Unknown backend: ' + str(_BACKEND))
 
