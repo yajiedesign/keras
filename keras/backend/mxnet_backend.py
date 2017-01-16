@@ -1,16 +1,21 @@
+from __future__ import print_function
 import mxnet as mx
 from mxnet import nd as T
 import numpy as np
+
+from keras.backend import switch
 from .common import _FLOATX, floatx, _EPSILON, image_dim_ordering, reset_uids, get_uid
 from numbers import Number
 
-_LEARNING_PHASE=1 
+_LEARNING_PHASE = 1
 _EXECUTOR = None
 _bind_values = {}
+
 
 def learning_phase():
     # False = test, True = train
     return _LEARNING_PHASE
+
 
 def set_learning_phase(value):
     global _LEARNING_PHASE
@@ -19,25 +24,27 @@ def set_learning_phase(value):
                          '0 or 1.')
     _LEARNING_PHASE = value
 
+
 def _typename(t):
-        if t == np.float16:
-            return 'float16'
-        elif t == np.float32:
-            return 'float32'
-        elif t == np.float64:
-            return 'float64'
-        elif t == np.uint8:
-            return 'uint8'
-        elif t == np.uint16:
-            return 'uint16'
-        elif t == np.int16:
-            return 'int16'
-        elif t == np.int32:
-            return 'int32'
-        elif t == np.int64:
-            return 'int64'
-        else:
-            raise TypeError('unknown type')
+    if t == np.float16:
+        return 'float16'
+    elif t == np.float32:
+        return 'float32'
+    elif t == np.float64:
+        return 'float64'
+    elif t == np.uint8:
+        return 'uint8'
+    elif t == np.uint16:
+        return 'uint16'
+    elif t == np.int16:
+        return 'int16'
+    elif t == np.int32:
+        return 'int32'
+    elif t == np.int64:
+        return 'int64'
+    else:
+        raise TypeError('unknown type')
+
 
 class KerasTensor(object):
     def __init__(self, ndarray, name=None):
@@ -50,7 +57,7 @@ class KerasTensor(object):
         else:
             self.name_ = _autogen_name('tensor')
         _bind_values[name] = ndarray
-    
+
     @property
     def name(self):
         return self.name_
@@ -100,31 +107,31 @@ class KerasSymbol(object):
 
     def __add__(self, other):
         return KerasSymbol(
-                mx.sym.broadcast_add(
-                    lhs = self.symbol,
-                    rhs = other.symbol))
+            mx.sym.broadcast_add(
+                lhs=self.symbol,
+                rhs=other.symbol))
 
     def __sub__(self, other):
         return KerasSymbol(
-                mx.sym.broadcast_minus(
-                    lhs = self.symbol,
-                    rhs = other.symbol))
+            mx.sym.broadcast_minus(
+                lhs=self.symbol,
+                rhs=other.symbol))
 
     def __div__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol / other)
+                self.symbol / other)
         else:
             return KerasSymbol(
-                    self.symbol / other.symbol)
+                self.symbol / other.symbol)
 
     def __mul__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol * other)
+                self.symbol * other)
         else:
             return KerasSymbol(
-                    self.symbol * other.symbol)
+                self.symbol * other.symbol)
 
     def __rmul__(self, other):
         return self.__mul__(other)
@@ -140,24 +147,28 @@ class KerasSymbol(object):
     def __str__(self):
         return "Symbol:" + self.symbol.name
 
+
 def KerasVariable(name, shape, dtype):
     if dtype is None:
         dtype = floatx()
     v = mx.sym.Variable(name, shape=shape, dtype=dtype)
     ret = KerasSymbol(v)
     ret._uses_learning_phase = False
-    ret._keras_shape = shape 
-    return ret 
+    ret._keras_shape = shape
+    return ret
+
 
 def clear_session():
     reset_uids()
     _EXECUTOR = None
 
+
 def _autogen_name(prefix):
     return prefix + str(get_uid(prefix))
 
+
 def dtype(x):
-    '''Returns the dtype of a Keras tensor or variable, as a string.
+    """Returns the dtype of a Keras tensor or variable, as a string.
 
     # Arguments
         x: Tensor or variable.
@@ -165,20 +176,24 @@ def dtype(x):
     # Returns
         String, dtype of `x`.
 
-    '''
+    """
     return x.get_type()
+
 
 def get_value(x):
     return eval(x)
 
+
 def batch_get_value(xs):
-    '''Returns the value of more than one tensor variable,
+    """Returns the value of more than one tensor variable,
     as a list of Numpy arrays.
-    '''
+    """
     return [get_value(x) for x in xs]
+
 
 def get_variable_shape(x):
     return x.shape
+
 
 def eval(x):
     if isinstance(x, KerasTensor):
@@ -192,8 +207,9 @@ def eval(x):
     else:
         raise ValueError('value is not supported')
 
+
 def variable(value, dtype=None, name=None):
-    '''Instantiates a variable and returns it.
+    """Instantiates a variable and returns it.
 
     # Arguments
         value: Numpy array, initial value of the tensor.
@@ -202,7 +218,7 @@ def variable(value, dtype=None, name=None):
 
     # Returns
         A variable instance (with Keras metadata included).
-    '''
+    """
     if name is None:
         name = _autogen_name('variable')
     if dtype is None:
@@ -211,10 +227,11 @@ def variable(value, dtype=None, name=None):
         value = np.array([value])
     ndarray = mx.nd.array(value, dtype=dtype)
     sym = KerasTensor(ndarray, name)
-    return sym 
+    return sym
+
 
 def count_params(x):
-    '''Returns the number of scalars in a Keras variable.
+    """Returns the number of scalars in a Keras variable.
 
     # Arguments
         x: Keras variable.
@@ -231,12 +248,13 @@ def count_params(x):
         array([[ 0.,  0.,  0.],
                [ 0.,  0.,  0.]], dtype=float32)
     ```
-    '''
-    shape = x.get_shape() 
+    """
+    shape = x.get_shape()
     return np.prod([shape[i] for i in range(len(shape))])
 
+
 def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
-    '''Instantiates a placeholder tensor and returns it.
+    """Instantiates a placeholder tensor and returns it.
 
     # Arguments
         shape: Shape of the placeholder
@@ -250,7 +268,7 @@ def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
     # Returns
         Tensor instance (with Keras metadata included).
 
-    '''
+    """
     if name is None:
         name = _autogen_name('placeholder')
     if not shape:
@@ -261,38 +279,42 @@ def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
     sym = KerasVariable(name, shape=shape, dtype=dtype)
     return sym
 
+
 def not_equal(x, y):
     if isinstance(y, KerasSymbol):
         y = y.symbol
     return KerasSymbol(
-            x.symbol.__ne__(y))
+        x.symbol.__ne__(y))
+
 
 def equal(x, y):
     if isinstance(y, KerasSymbol):
         y = y.symbol
     return KerasSymbol(
-            x.symbol.__eq__(y))
+        x.symbol.__eq__(y))
+
 
 def shape(x):
-    '''Returns the symbolic shape of a tensor or variable.
+    """Returns the symbolic shape of a tensor or variable.
 
     # Arguments
         x: A tensor or variable.
 
     # Returns
         A symbolic shape (which is itself a tensor).
-    '''
- #   if hasattr(x, '_keras_shape'):
- #       return tuple([0 if x is None else x for x in x._keras_shape])
+    """
+    #   if hasattr(x, '_keras_shape'):
+    #       return tuple([0 if x is None else x for x in x._keras_shape])
     if isinstance(x, KerasSymbol):
         return x.get_shape()
     else:
         return None
 
+
 def in_train_phase(x, alt):
-    '''Selects `x` in train phase, and `alt` otherwise.
+    """Selects `x` in train phase, and `alt` otherwise.
     Note that `alt` should have the *same shape* as `x`.
-    '''
+    """
     if learning_phase() is 1:
         return x
     elif learning_phase() is 0:
@@ -304,9 +326,9 @@ def in_train_phase(x, alt):
 
 
 def in_test_phase(x, alt):
-    '''Selects `x` in test phase, and `alt` otherwise.
+    """Selects `x` in test phase, and `alt` otherwise.
     Note that `alt` should have the *same shape* as `x`.
-    '''
+    """
     if learning_phase() is 1:
         return alt
     elif learning_phase() is 0:
@@ -316,8 +338,9 @@ def in_test_phase(x, alt):
     x._uses_learning_phase = True
     return x
 
+
 def int_shape(x):
-    '''Returns the shape of a Keras tensor or a Keras variable as a tuple of
+    """Returns the shape of a Keras tensor or a Keras variable as a tuple of
     integers or None entries.
 
     # Arguments
@@ -326,15 +349,16 @@ def int_shape(x):
     # Returns
         A tuple of integers (or None entries).
 
-    '''
+    """
     s = shape(x)
     if s is None:
         return None
     else:
         return tuple([i.__int__() for i in s])
 
+
 def ndim(x):
-    '''Returns the number of axes in a tensor, as an integer.
+    """Returns the number of axes in a tensor, as an integer.
 
     # Arguments
         x: Tensor or variable.
@@ -342,15 +366,16 @@ def ndim(x):
     # Returns
         Integer (scalar), number of axes.
 
-    '''
+    """
     s = shape(x)
     if s is None:
         return None
     else:
         return len(s)
 
+
 def cast(x, dtype):
-    '''Casts a tensor to a different dtype and returns it.
+    """Casts a tensor to a different dtype and returns it.
 
     You can cast a Keras variable but it still returns a Keras tensor.
 
@@ -360,17 +385,19 @@ def cast(x, dtype):
 
     # Returns
         Keras tensor with dtype `dtype`.
-    '''
+    """
     return KerasSymbol(
-            mx.sym.Cast(data=x.symbol, dtype=dtype))
+        mx.sym.Cast(data=x.symbol, dtype=dtype))
+
 
 def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     return KerasVariable(
-            random_uniform_variable(shape, low, high, dtype=dtype, seed=seed).symbol)
+        random_uniform_variable(shape, low, high, dtype=dtype, seed=seed).symbol)
+
 
 def random_uniform_variable(shape, low, high, dtype=None,
                             name=None, seed=None):
-    '''Instantiates an Keras variable filled with
+    """Instantiates an Keras variable filled with
     samples drawn from a uniform distribution and returns it.
 
     # Arguments
@@ -383,18 +410,19 @@ def random_uniform_variable(shape, low, high, dtype=None,
 
     # Returns
         A Keras variable, filled with drawn samples.
-    '''
-    #if seed:
+    """
+    # if seed:
     #    mx.random.seed(seed)
     if dtype is None:
         dtype = floatx()
     value = mx.random.uniform(low, high, shape)
     if name is None:
-        name = _autogen_name('randinit') 
+        name = _autogen_name('randinit')
     return KerasTensor(value, name)
 
+
 def zeros(shape, dtype=None, name=None):
-    '''Instantiates an all-zeros variable and returns it.
+    """Instantiates an all-zeros variable and returns it.
 
     # Arguments
         shape: Tuple of integers, shape of returned Keras variable
@@ -404,18 +432,19 @@ def zeros(shape, dtype=None, name=None):
     # Returns
         A variable (including Keras metadata), filled with `0.0`.
 
-    '''
+    """
     if dtype is None:
         dtype = floatx()
     value = mx.nd.zeros(shape, dtype=dtype)
     if name is None:
-        name = _autogen_name('zeroinit') 
+        name = _autogen_name('zeroinit')
     return KerasTensor(value, name)
+
 
 # LINEAR ALGEBRA
 
 def dot(x, y):
-    '''Multiplies 2 tensors (and/or variables) and returns a *tensor*.
+    """Multiplies 2 tensors (and/or variables) and returns a *tensor*.
     When attempting to multiply a ND tensor
     with a ND tensor, it reproduces the Theano behavior.
     (e.g. (2, 3).(4, 3, 5) = (2, 4, 5))
@@ -426,28 +455,31 @@ def dot(x, y):
 
     # Returns
         A tensor, dot product of `x` and `y`.
-    '''
-    print x.symbol
-    print y.symbol
+    """
+    print(x.symbol)
+    print(y.symbol)
     return KerasSymbol(mx.sym.dot(lhs=x.symbol, rhs=y.symbol))
 
+
 def relu(x, alpha=0., max_value=None):
-    '''Rectified linear unit
+    """Rectified linear unit
 
     # Arguments
         alpha: slope of negative section.
         max_value: saturation threshold.
-    '''
+    """
     if alpha != 0.:
-        ret =  mx.sym.LeakyReLU(data=x.symbol,
-            slope = alpha)
+        ret = mx.sym.LeakyReLU(data=x.symbol,
+                               slope=alpha)
     else:
         ret = mx.sym.Activation(data=x.symbol,
-            act_type='relu')
+                                act_type='relu')
     return KerasSymbol(ret)
+
 
 def is_sparse(tensor):
     return False
+
 
 def _normalize_axis(axis, ndim):
     if isinstance(axis, tuple):
@@ -461,16 +493,18 @@ def _normalize_axis(axis, ndim):
             axis = axis % ndim
     return axis
 
+
 def argmax(x, axis=-1):
-    axis = _normalize_axis(axis, ndim(x)) 
+    axis = _normalize_axis(axis, ndim(x))
     if axis != None:
         ret = mx.sym.argmax(data=x.symbol, axis=axis)
     else:
         ret = mx.sym.argmax(data=x.symbol)
     return KerasSymbol(ret)
 
+
 def mean(x, axis=None, keepdims=False):
-    axis = _normalize_axis(axis, ndim(x)) 
+    axis = _normalize_axis(axis, ndim(x))
     if axis != None:
         ret = mx.sym.sum(data=x.symbol, axis=axis, keepdims=keepdims)
     else:
@@ -478,15 +512,16 @@ def mean(x, axis=None, keepdims=False):
     ret = ret / count_params(x)
     return KerasSymbol(ret)
 
+
 def square(x):
-    '''Element-wise square.
-    '''
-    ret = mx.sym.square(data=x.symbol) 
+    """Element-wise square.
+    """
+    ret = mx.sym.square(data=x.symbol)
     return KerasSymbol(ret)
 
 
 def dropout(x, level, noise_shape=None, seed=None):
-    '''Sets entries in `x` to zero at random,
+    """Sets entries in `x` to zero at random,
     while scaling the entire tensor.
 
     # Arguments
@@ -496,48 +531,53 @@ def dropout(x, level, noise_shape=None, seed=None):
         noise_shape: shape for randomly generated keep/drop flags,
             must be broadcastable to the shape of `x`
         seed: random seed to ensure determinism.
-    '''
+    """
     return KerasSymbol(
-            mx.sym.Dropout(data=x.symbol, p=level))
+        mx.sym.Dropout(data=x.symbol, p=level))
+
 
 def transpose(x):
-    '''Transposes a tensor and returns it.
+    """Transposes a tensor and returns it.
 
     # Arguments
         x: Tensor or variable.
 
     # Returns
         A tensor.
-    '''
+    """
     return KerasSymbol(
-            mx.sym.transpose(data=x.symbol))
+        mx.sym.transpose(data=x.symbol))
+
 
 def gradients(loss, variables):
-    '''Returns the gradients of `variables` (list of tensor variables)
+    """Returns the gradients of `variables` (list of tensor variables)
     with regard to `loss`.
-    '''
-    #TODO
+    """
+    # TODO
     return loss
+
 
 def softmax(x):
     return KerasSymbol(
-            mx.sym.SoftmaxOutput(data=x.symbol))
+        mx.sym.SoftmaxOutput(data=x.symbol))
+
 
 def categorical_crossentropy(output, target, from_logits=False):
     if not from_logits:
         return output
-    return 
+    return
 
 
 class Function(object):
     def __init__(self, inputs, output, updates=[], **kwargs):
-        print 'inputs', [x.name for x in inputs]
-        print 'output', [x.name for x in output]
-        print 'updates', updates
+        print('inputs', [x.name for x in inputs])
+        print('output', [x.name for x in output])
+        print('updates', updates)
 
     def __call__(self, inputs):
-        print 'call', inputs
+        print('call', inputs)
         return None
+
 
 def function(inputs, outputs, updates=[], **kwargs):
     return Function(inputs, outputs, updates=updates, **kwargs)
