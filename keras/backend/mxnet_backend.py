@@ -3,7 +3,6 @@ import mxnet as mx
 from mxnet import nd as T
 import numpy as np
 
-from keras.backend import switch
 from .common import _FLOATX, floatx, _EPSILON, image_dim_ordering, reset_uids, get_uid
 from numbers import Number
 
@@ -44,6 +43,10 @@ def _typename(t):
         return 'int64'
     else:
         raise TypeError('unknown type')
+
+
+def is_sparse(tensor):
+    return False
 
 
 class KerasTensor(object):
@@ -167,19 +170,6 @@ def _autogen_name(prefix):
     return prefix + str(get_uid(prefix))
 
 
-def dtype(x):
-    """Returns the dtype of a Keras tensor or variable, as a string.
-
-    # Arguments
-        x: Tensor or variable.
-
-    # Returns
-        String, dtype of `x`.
-
-    """
-    return x.get_type()
-
-
 def get_value(x):
     return eval(x)
 
@@ -195,17 +185,7 @@ def get_variable_shape(x):
     return x.shape
 
 
-def eval(x):
-    if isinstance(x, KerasTensor):
-        return x.tensor.asnumpy()
-    elif isinstance(x, KerasSymbol):
-        executor = x.symbol.simple_bind(mx.cpu())
-        for v in executor.arg_dict:
-            _bind_values[v].copyto(executor.arg_dict[v])
-        outputs = executor.forward(is_train=_LEARNING_PHASE)
-        return outputs[0].asnumpy()
-    else:
-        raise ValueError('value is not supported')
+
 
 
 def variable(value, dtype=None, name=None):
@@ -228,29 +208,6 @@ def variable(value, dtype=None, name=None):
     ndarray = mx.nd.array(value, dtype=dtype)
     sym = KerasTensor(ndarray, name)
     return sym
-
-
-def count_params(x):
-    """Returns the number of scalars in a Keras variable.
-
-    # Arguments
-        x: Keras variable.
-
-    # Returns
-        Integer, the number of scalars in `x`.
-
-    # Example
-    ```python
-        >>> kvar = K.zeros((2,3))
-        >>> K.count_params(kvar)
-        6
-        >>> K.eval(kvar)
-        array([[ 0.,  0.,  0.],
-               [ 0.,  0.,  0.]], dtype=float32)
-    ```
-    """
-    shape = x.get_shape()
-    return np.prod([shape[i] for i in range(len(shape))])
 
 
 def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
@@ -311,34 +268,6 @@ def shape(x):
         return None
 
 
-def in_train_phase(x, alt):
-    """Selects `x` in train phase, and `alt` otherwise.
-    Note that `alt` should have the *same shape* as `x`.
-    """
-    if learning_phase() is 1:
-        return x
-    elif learning_phase() is 0:
-        return alt
-    # else: assume learning phase is a placeholder tensor.
-    x = switch(learning_phase(), x, alt)
-    x._uses_learning_phase = True
-    return x
-
-
-def in_test_phase(x, alt):
-    """Selects `x` in test phase, and `alt` otherwise.
-    Note that `alt` should have the *same shape* as `x`.
-    """
-    if learning_phase() is 1:
-        return alt
-    elif learning_phase() is 0:
-        return x
-    # else: assume learning phase is a placeholder tensor.
-    x = switch(learning_phase(), alt, x)
-    x._uses_learning_phase = True
-    return x
-
-
 def int_shape(x):
     """Returns the shape of a Keras tensor or a Keras variable as a tuple of
     integers or None entries.
@@ -349,6 +278,17 @@ def int_shape(x):
     # Returns
         A tuple of integers (or None entries).
 
+    # Examples
+    ```python
+        >>> from keras import backend as K
+        >>> input = K.placeholder(shape=(2, 4, 5))
+        >>> K.int_shape(input)
+        (2, 4, 5)
+        >>> val = np.array([[1, 2], [3, 4]])
+        >>> kvar = K.variable(value=val)
+        >>> K.int_shape(kvar)
+        (2, 2)
+    ```
     """
     s = shape(x)
     if s is None:
@@ -374,6 +314,71 @@ def ndim(x):
         return len(s)
 
 
+def dtype(x):
+    """Returns the dtype of a Keras tensor or variable, as a string.
+
+    # Arguments
+        x: Tensor or variable.
+
+    # Returns
+        String, dtype of `x`.
+
+    """
+    return x.get_type()
+def eval(x):
+    """Evaluates the value of a variable.
+    Returns a Numpy array.
+
+    # Arguments
+        x: A variable.
+
+    # Returns
+        A Numpy array.
+
+    # Examples
+    ```python
+        >>> from keras import backend as K
+        >>> kvar = K.variable(np.array([[1, 2], [3, 4]]), dtype='float32')
+        >>> K.eval(kvar)
+        array([[ 1.,  2.],
+               [ 3.,  4.]], dtype=float32)
+    ```
+    """
+    if isinstance(x, KerasTensor):
+        return x.tensor.asnumpy()
+    elif isinstance(x, KerasSymbol):
+        executor = x.symbol.simple_bind(mx.cpu())
+        for v in executor.arg_dict:
+            _bind_values[v].copyto(executor.arg_dict[v])
+        outputs = executor.forward(is_train=_LEARNING_PHASE)
+        return outputs[0].asnumpy()
+    else:
+        raise ValueError('value is not supported')
+
+
+def count_params(x):
+    """Returns the number of scalars in a Keras variable.
+
+    # Arguments
+        x: Keras variable.
+
+    # Returns
+        Integer, the number of scalars in `x`.
+
+    # Example
+    ```python
+        >>> kvar = K.zeros((2,3))
+        >>> K.count_params(kvar)
+        6
+        >>> K.eval(kvar)
+        array([[ 0.,  0.,  0.],
+               [ 0.,  0.,  0.]], dtype=float32)
+    ```
+    """
+    shape = x.get_shape()
+    return np.prod([shape[i] for i in range(len(shape))])
+
+
 def cast(x, dtype):
     """Casts a tensor to a different dtype and returns it.
 
@@ -388,11 +393,6 @@ def cast(x, dtype):
     """
     return KerasSymbol(
         mx.sym.Cast(data=x.symbol, dtype=dtype))
-
-
-def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
-    return KerasVariable(
-        random_uniform_variable(shape, low, high, dtype=dtype, seed=seed).symbol)
 
 
 def random_uniform_variable(shape, low, high, dtype=None,
@@ -477,8 +477,17 @@ def relu(x, alpha=0., max_value=None):
     return KerasSymbol(ret)
 
 
-def is_sparse(tensor):
-    return False
+def transpose(x):
+    """Transposes a tensor and returns it.
+
+    # Arguments
+        x: Tensor or variable.
+
+    # Returns
+        A tensor.
+    """
+    return KerasSymbol(
+        mx.sym.transpose(data=x.symbol))
 
 
 def _normalize_axis(axis, ndim):
@@ -494,15 +503,6 @@ def _normalize_axis(axis, ndim):
     return axis
 
 
-def argmax(x, axis=-1):
-    axis = _normalize_axis(axis, ndim(x))
-    if axis != None:
-        ret = mx.sym.argmax(data=x.symbol, axis=axis)
-    else:
-        ret = mx.sym.argmax(data=x.symbol)
-    return KerasSymbol(ret)
-
-
 def mean(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, ndim(x))
     if axis != None:
@@ -513,11 +513,79 @@ def mean(x, axis=None, keepdims=False):
     return KerasSymbol(ret)
 
 
+def argmax(x, axis=-1):
+    """Returns the index of the maximum value along an axis.
+
+    # Arguments
+        x: input tensor.
+        axis: axis along which to perform the reduction.
+        keepdims: whether the drop or broadcast the reduction axes.
+
+    # Returns
+        A tensor.
+    """
+    axis = _normalize_axis(axis, ndim(x))
+    if axis != None:
+        ret = mx.sym.argmax(data=x.symbol, axis=axis)
+    else:
+        ret = mx.sym.argmax(data=x.symbol)
+    return KerasSymbol(ret)
+
+
 def square(x):
     """Element-wise square.
     """
     ret = mx.sym.square(data=x.symbol)
     return KerasSymbol(ret)
+
+
+def gradients(loss, variables):
+    """Returns the gradients of `variables` (list of tensor variables)
+    with regard to `loss`.
+    """
+    # TODO
+    return loss
+
+
+def in_train_phase(x, alt):
+    """Selects `x` in train phase, and `alt` otherwise.
+    Note that `alt` should have the *same shape* as `x`.
+    """
+    if learning_phase() is 1:
+        return x
+    elif learning_phase() is 0:
+        return alt
+    # else: assume learning phase is a placeholder tensor.
+    x = switch(learning_phase(), x, alt)
+    x._uses_learning_phase = True
+    return x
+
+
+def in_test_phase(x, alt):
+    """Selects `x` in test phase, and `alt` otherwise.
+    Note that `alt` should have the *same shape* as `x`.
+    """
+    if learning_phase() is 1:
+        return alt
+    elif learning_phase() is 0:
+        return x
+    # else: assume learning phase is a placeholder tensor.
+    x = switch(learning_phase(), alt, x)
+    x._uses_learning_phase = True
+    return x
+
+
+def softmax(x):
+    """Softmax of a tensor.
+
+    # Arguments
+        x: A tensor or variable.
+
+    # Returns
+        A tensor.
+    """
+    return KerasSymbol(
+        mx.sym.SoftmaxOutput(data=x.symbol))
 
 
 def dropout(x, level, noise_shape=None, seed=None):
@@ -531,35 +599,11 @@ def dropout(x, level, noise_shape=None, seed=None):
         noise_shape: shape for randomly generated keep/drop flags,
             must be broadcastable to the shape of `x`
         seed: random seed to ensure determinism.
-    """
-    return KerasSymbol(
-        mx.sym.Dropout(data=x.symbol, p=level))
-
-
-def transpose(x):
-    """Transposes a tensor and returns it.
-
-    # Arguments
-        x: Tensor or variable.
-
     # Returns
         A tensor.
     """
     return KerasSymbol(
-        mx.sym.transpose(data=x.symbol))
-
-
-def gradients(loss, variables):
-    """Returns the gradients of `variables` (list of tensor variables)
-    with regard to `loss`.
-    """
-    # TODO
-    return loss
-
-
-def softmax(x):
-    return KerasSymbol(
-        mx.sym.SoftmaxOutput(data=x.symbol))
+        mx.sym.Dropout(data=x.symbol, p=level))
 
 
 def categorical_crossentropy(output, target, from_logits=False):
@@ -581,3 +625,280 @@ class Function(object):
 
 def function(inputs, outputs, updates=[], **kwargs):
     return Function(inputs, outputs, updates=updates, **kwargs)
+
+
+# CONVOLUTIONS
+
+def conv1d(x, kernel, stride=1, border_mode='valid',
+           image_shape=None, filter_shape=None):
+    """1D convolution.
+
+    # Arguments
+        kernel: kernel tensor.
+        strides: stride integer.
+        border_mode: string, `"same"` or `"valid"`.
+
+    # Returns
+        A tensor, result of 1D convolution.
+    """
+    return KerasSymbol(mx.sym.Convolution(data=x, kernel=kernel, num_filter=num_filter))
+
+
+def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
+           dim_ordering='default',
+           image_shape=None, filter_shape=None, filter_dilation=(1, 1)):
+    """2D convolution.
+
+    # Arguments
+        kernel: kernel tensor.
+        strides: strides tuple.
+        border_mode: string, `"same"` or `"valid"`.
+        dim_ordering: `"tf"` or `"th"`.
+            Whether to use Theano or TensorFlow dimension ordering
+            for inputs/kernels/ouputs.
+
+    # Returns
+        A tensor, result of 2D convolution.
+    """
+    return KerasSymbol()
+
+
+def deconv2d(x, kernel, output_shape, strides=(1, 1),
+             border_mode='valid',
+             dim_ordering='default',
+             image_shape=None, filter_shape=None):
+    """2D deconvolution (i.e. transposed convolution).
+
+    # Arguments
+        x: input tensor.
+        kernel: kernel tensor.
+        output_shape: 1D int tensor for the output shape.
+        strides: strides tuple.
+        border_mode: string, `"same"` or `"valid"`.
+        dim_ordering: `"tf"` or `"th"`.
+            Whether to use Theano or TensorFlow dimension ordering
+            for inputs/kernels/ouputs.
+
+    # Returns
+        A tensor, result of transposed 2D convolution.
+    """
+    return KerasSymbol()
+
+
+def atrous_conv2d(x, kernel, rate=1,
+                  border_mode='valid',
+                  dim_ordering='default',
+                  image_shape=None, filter_shape=None):
+    """Atrous 2D convolution. Also as known as dilated convolution.
+
+    # Arguments
+        x: input tensor.
+        kernel: kernel tensor.
+        rate: integer > 0, the sample stride.
+        output_shape: 1D int tensor for the output shape.
+        strides: strides tuple.
+        border_mode: string, `"same"` or `"valid"`.
+        dim_ordering: `"tf"` or `"th"`.
+            Whether to use Theano or TensorFlow dimension ordering
+            for inputs/kernels/ouputs.
+
+    # Returns
+        A tensor, result of atrous transposed 2D convolution.
+    """
+    return KerasSymbol()
+
+
+def separable_conv2d(x, depthwise_kernel, pointwise_kernel, strides=(1, 1),
+                     border_mode='valid', dim_ordering='default'):
+    """2-D convolution with separable filters.
+    """
+    return KerasSymbol()
+
+
+def conv3d(x, kernel, strides=(1, 1, 1),
+           border_mode='valid', dim_ordering='default',
+           volume_shape=None, filter_shape=None):
+    """3D convolution.
+
+    # Arguments
+        kernel: kernel tensor.
+        strides: strides tuple.
+        border_mode: string, `"same"` or `"valid"`.
+        dim_ordering: `"tf"` or `"th"`.
+            Whether to use Theano or TensorFlow dimension ordering
+            for inputs/kernels/ouputs.
+
+    # Returns
+        A tensor, result of 3D convolution.
+    """
+    return KerasSymbol()
+
+
+def pool2d(x, pool_size, strides=(1, 1),
+           border_mode='valid', dim_ordering='default',
+           pool_mode='max'):
+    """2D Pooling.
+
+    # Arguments
+        pool_size: tuple of 2 integers.
+        strides: tuple of 2 integers.
+        border_mode: one of `"valid"`, `"same"`.
+        dim_ordering: one of `"th"`, `"tf"`.
+        pool_mode: one of `"max"`, `"avg"`.
+
+    # Returns
+        A tensor, result of 2D pooling.
+    """
+    return KerasSymbol()
+
+
+def pool3d(x, pool_size, strides=(1, 1, 1), border_mode='valid',
+           dim_ordering='default', pool_mode='max'):
+    """3D Pooling.
+
+    # Arguments
+        pool_size: tuple of 3 integers.
+        strides: tuple of 3 integers.
+        border_mode: one of `"valid"`, `"same"`.
+        dim_ordering: one of `"th"`, `"tf"`.
+        pool_mode: one of `"max"`, `"avg"`.
+
+    # Returns
+        A tensor, result of 3D pooling.
+    """
+    return KerasSymbol()
+
+
+def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
+    """Returns a tensor with normal distribution
+
+    # Arguments
+        shape: A tuple of integers, the shape of tensor to create.
+        mean: A float, mean of the normal distribution to draw samples.
+        std: A float, standard deviation of the normal distribution
+            to draw samples.
+        dtype: String, dtype of returned tensor.
+        seed: Integer, random seed.
+
+    # Returns
+        A tensor.
+    """
+    return KerasSymbol()
+
+
+def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
+    """Returns a tensor with uniform distribution
+
+    # Arguments
+        shape: A tuple of integers, the shape of tensor to create.
+        low: A float, lower boundary of the uniform distribution
+            to draw samples.
+        high: A float, upper boundary of the uniform distribution
+            to draw samples.
+        dtype: String, dtype of returned tensor.
+        seed: Integer, random seed.
+
+    # Returns
+        A tensor.
+    """
+
+    return KerasVariable(
+        random_uniform_variable(shape, low, high, dtype=dtype, seed=seed).symbol)
+
+
+def random_binomial(shape, p=0.0, dtype=None, seed=None):
+    """Returns a tensor with binomlai distribution
+
+    # Arguments
+        shape: A tuple of integers, the shape of tensor to create.
+        p: A float, `0. <= p <= 1`, probability of binomlai distribution.
+        dtype: String, dtype of returned tensor.
+        seed: Integer, random seed.
+
+    # Returns
+        A tensor.
+    """
+    return KerasSymbol()
+
+
+# CTC
+def ctc_label_dense_to_sparse(labels, label_lengths):
+    return KerasSymbol()
+
+
+def ctc_batch_cost(y_true, y_pred, input_length, label_length):
+    return KerasSymbol()
+
+
+def ctc_decode(y_pred, input_length, greedy=True, beam_width=100,
+               top_paths=1):
+    """Decodes the output of a softmax using either
+       greedy (also known as best path) or a constrained dictionary
+       search.
+
+    # Arguments
+        y_pred: tensor `(samples, time_steps, num_categories)` containing the prediction,
+                or output of the softmax.
+        input_length: tensor `(samples, )` containing the sequence length for
+                each batch item in `y_pred`.
+        greedy: perform much faster best-path search if `true`. This does
+                not use a dictionary
+        beam_width: if `greedy` is `false`: a beam search decoder will be used
+                with a beam of this width
+        top_paths: if `greedy` is `false`: how many of the most probable paths will be returned
+
+    # Returns
+        Tuple:
+            List: if `greedy` is `true`, returns a list of one element that contains
+                the decoded sequence. If `false`, returns the `top_paths` most probable
+                decoded sequences. Important: blank labels are returned as `-1`.
+            Tensor `(top_paths, )` that contains the log probability of each decoded sequence
+    """
+    return KerasSymbol()
+
+
+# HIGH ORDER FUNCTIONS
+def map_fn(fn, elems, name=None):
+    """Map the function fn over the elements elems and return the outputs.
+
+    # Arguments
+        fn: Callable that will be called upon each element in elems
+        elems: tensor
+        name: A string name for the map node in the graph
+
+    # Returns
+        Tensor with first dimension equal to the elems and second depending on
+        fn
+    """
+    return KerasSymbol()
+
+
+def foldl(fn, elems, initializer=None, name=None):
+    """Reduce elems using fn to combine them from left to right.
+
+    # Arguments
+        fn: Callable that will be called upon each element in elems and an
+            accumulator, for instance `lambda acc, x: acc + x`
+        elems: tensor
+        initializer: The first value used (`elems[0]` in case of None)
+        name: A string name for the foldl node in the graph
+
+    # Returns
+        Same type and shape as initializer
+    """
+
+
+def foldr(fn, elems, initializer=None, name=None):
+    """Reduce elems using fn to combine them from right to left.
+
+    # Arguments
+        fn: Callable that will be called upon each element in elems and an
+            accumulator, for instance `lambda acc, x: acc + x`
+        elems: tensor
+        initializer: The first value used (`elems[-1]` in case of None)
+        name: A string name for the foldr node in the graph
+
+    # Returns
+        Same type and shape as initializer
+    """
+    return KerasSymbol()
