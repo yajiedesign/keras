@@ -23,6 +23,8 @@ from .. import metrics as metrics_module
 from ..utils.generic_utils import Progbar
 from .. import callbacks as cbks
 
+if K.backend() == 'mxnet':
+    import mxnet as mx
 
 def standardize_input_data(data, names, shapes=None,
                            check_batch_axis=True,
@@ -445,7 +447,6 @@ def generator_queue(generator, max_q_size=10,
         raise
 
     return q, _stop, generator_threads
-
 
 class Model(Container):
 
@@ -1769,3 +1770,75 @@ class Model(Container):
         if len(all_outs) == 1:
             return all_outs[0]
         return all_outs
+
+if K.backend() == 'mxnet':
+    class MXModel(Model):
+
+        def compile(self, optimizer, loss, metrics=None, loss_weights=None,
+                    sample_weight_mode=None, context=K.mx.cpu(0), kvstore='device', **kwargs):
+            super(MXModel, self).compile(optimizer, loss, metrics, loss_weights,
+                                         sample_weight_mode, **kwargs)
+            self._context = context
+            self._data_names = [x.name for x in self.inputs]
+            self._label_names = [x.name for x in self.targets + self.sample_weights]
+            self._num_data = len(self._data_names)
+            self._num_label = len(self._label_names)
+            self._symbol = K.make_loss(self.total_loss.symbol)
+            self._param_names = [n for n in self._symbol.list_arguments() \
+                                    if n not in self._data_names + self._label_names]
+            self._aux_names = self._symbol.list_auxiliary_states()
+            self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
+            self._train_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
+                                              label_names=self._label_names, context=self._context)
+            self._pred_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
+                                             label_names=None, context=self._context)
+            self._weights_dirty = False
+
+            def train_function(inputs):
+                assert self._num_data + self._num_label == len(inputs)
+                data = [K.mx.nd.array(x, dtype=s.dtype) \
+                            for s, x in zip(self.inputs, inputs[:self._num_data])]
+                label = [K.mx.nd.array(x, dtype=s.dtype) \
+                            for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
+                if not self._train_mod.binded:
+                    data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in zip(self.inputs, data)]
+                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
+                                        for s, arr in zip(self.targets + self.sample_weights, label)]
+                    self._train_mod.bind(data_shapes=data_shapes, label_shapes=label_shapes)
+                    self._set_weights(self._train_mod)
+                    self._train_mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
+
+                batch = K.mx.io.DataBatch(data=data, label=label)
+                self._train_mod.forward_backward(batch)
+                self._train_mod.update()
+                self._weights_dirty = True
+                return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
+
+            self.train_function = train_function
+
+        def _sync_weights(self):
+            if self._weights_dirty:
+                assert self._train_mod is not None
+                args, auxs = self._train_mod.get_params()
+                for name, x in zip(self._param_names, args):
+                    self._weights[name].tensor[:] = x
+                for name, x in zip(self._aux_names, auxs):
+                    self._weights[name].tensor[:] = x
+                self._weights_dirty = False
+
+        def _set_weights(self, mod):
+            args = {name: self._weights[name].tensor for name in self._param_names}
+            auxs = {name: self._weights[name].tensor for name in self._aux_names}
+            mod.set_params(args, auxs)
+            self._weights_dirty = False
+
+        def _make_test_function(self):
+            pass
+
+        def _make_train_function(self):
+            pass
+
+        def _make_predict_function(self):
+            pass
+
+    Model = MXModel

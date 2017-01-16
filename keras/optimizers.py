@@ -635,6 +635,11 @@ class TFOptimizer(Optimizer):
     def from_config(self, config):
         raise NotImplementedError
 
+if K.backend() == 'mxnet':
+    class SGD(Optimizer, K.mx.optimizer.SGD):
+        def __init__(self, lr=0.01, momentum=0.):
+            Optimizer.__init__(self)
+            K.mx.optimizer.SGD.__init__(self, learning_rate=lr, momentum=momentum)
 
 # Aliases.
 
