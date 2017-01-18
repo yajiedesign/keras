@@ -637,9 +637,14 @@ class TFOptimizer(Optimizer):
 
 if K.backend() == 'mxnet':
     class SGD(Optimizer, K.mx.optimizer.SGD):
-        def __init__(self, lr=0.01, momentum=0.):
+        def __init__(self, lr=0.01, momentum=0., **kwargs):
             Optimizer.__init__(self)
-            K.mx.optimizer.SGD.__init__(self, learning_rate=lr, momentum=momentum)
+            K.mx.optimizer.SGD.__init__(self, learning_rate=lr, momentum=momentum, **kwargs)
+
+    class AdaDelta(Optimizer, K.mx.optimizer.AdaDelta):
+        def __init__(self,  rho=0.90, epsilon=1e-5, **kwargs):
+            Optimizer.__init__(self)
+            K.mx.optimizer.AdaDelta.__init__(self, rho=rho, epsilon=epsilon, **kwargs)
 
 # Aliases.
 
