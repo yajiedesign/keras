@@ -157,8 +157,18 @@ class KerasSymbol(object):
         else:
             return KerasSymbol(
                 mx.sym.broadcast_div(
-                    lhs = self.symbol,
-                    rhs = other.symbol))
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __itruediv__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                self.symbol / other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_div(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
 
     def __mul__(self, other):
         if isinstance(other, Number):
@@ -167,8 +177,8 @@ class KerasSymbol(object):
         else:
             return KerasSymbol(
                 mx.sym.broadcast_mul(
-                    lhs = self.symbol,
-                    rhs = other.symbol))
+                    lhs=self.symbol,
+                    rhs=other.symbol))
 
     def __rmul__(self, other):
         return self.__mul__(other)
@@ -179,12 +189,15 @@ class KerasSymbol(object):
                 self.symbol.__eq__(other))
         else:
             return KerasSymbol(
-                    mx.sym.broadcast_equal(
-                        lhs = self.symbol,
-                        rhs = other.symbol))
+                mx.sym.broadcast_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
 
     def __str__(self):
         return "Symbol:" + self.symbol.name
+
+    def __hash__(self):
+        return hash(self.name)
 
 
 def KerasVariable(name, shape, dtype):
@@ -322,6 +335,7 @@ def shape(x):
         return x.get_shape()
     else:
         return None
+
 
 def int_shape(x):
     """Returns the shape of a Keras tensor or a Keras variable as a tuple of
@@ -562,6 +576,7 @@ def ones_like(x, name=None):
     ```
     """
     raise NotImplementedError
+
 
 def random_uniform_variable(shape, low, high, dtype=None,
                             name=None, seed=None):
@@ -989,7 +1004,7 @@ def mean(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, ndim(x))
     if axis == [] or axis == tuple():
         return x
-    if axis != None:
+    if axis is not None:
         ret = mx.sym.mean(data=x.symbol, axis=axis, keepdims=keepdims)
     else:
         ret = mx.sym.mean(data=x.symbol, keepdims=keepdims)
@@ -1256,7 +1271,7 @@ def reshape(x, shape):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.Reshape(data=x.symbol, shape=shape))
 
 
 def permute_dimensions(x, pattern):
@@ -1367,7 +1382,7 @@ def batch_flatten(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.Flatten(data=x.symbol))
 
 
 def expand_dims(x, dim=-1):
@@ -1641,10 +1656,11 @@ def switch(condition, then_expression, else_expression):
     """
     raise NotImplementedError
 
+
 def in_train_phase(x, alt):
-    '''Selects `x` in train phase, and `alt` otherwise.
+    """Selects `x` in train phase, and `alt` otherwise.
     Note that `alt` should have the *same shape* as `x`.
-    '''
+    """
     if learning_phase() is 1:
         return x()
     if learning_phase() is 0:
@@ -1661,6 +1677,7 @@ def in_test_phase(x, alt):
     elif learning_phase() is 0:
         return x()
     raise AssertionError("Learning phase must be 0 or 1")
+
 
 def relu(x, alpha=0., max_value=None):
     """Rectified linear unit
@@ -1732,7 +1749,7 @@ def categorical_crossentropy(output, target, from_logits=False):
     assert not from_logits
     axis = ndim(output) - 1
     output = output.symbol
-    output = output*(output<(1.-_EPSILON))*(output > _EPSILON)
+    output = output * (output < (1. - _EPSILON)) * (output > _EPSILON)
     output = - mx.sym.sum(target.symbol * mx.sym.log(output), axis=axis)
     return KerasSymbol(output)
 
@@ -1880,7 +1897,10 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     # Returns
         A tensor, result of 2D convolution.
     """
-    raise NotImplementedError
+    layout_kernel = _layout_kernel(dim_ordering, kernel.shape)
+    s = mx.sym.Convolution(data=x.symbol, name=kernel.name, kernel=layout_kernel, stride=strides,
+                           num_filter=kernel.shape[0], weight=kernel.symbol, no_bias=True)
+    return KerasSymbol(s)
 
 
 def deconv2d(x, kernel, output_shape, strides=(1, 1),
@@ -1969,7 +1989,10 @@ def pool2d(x, pool_size, strides=(1, 1),
     # Returns
         A tensor, result of 2D pooling.
     """
-    raise NotImplementedError
+    s = mx.sym.Pooling(data=x.symbol, kernel=pool_size, pool_type=pool_mode, pooling_convention=border_mode,
+                       stride=strides)
+    # print(SymbolDoc.get_output_shape(s, convolution2d_input_1=(128, 1, 28, 28), ))
+    return KerasSymbol(s)
 
 
 def pool3d(x, pool_size, strides=(1, 1, 1), border_mode='valid',
@@ -2123,3 +2146,25 @@ def foldr(fn, elems, initializer=None, name=None):
         Same type and shape as initializer
     """
     raise NotImplementedError
+
+
+def _layout_from(dim_ordering):
+    if dim_ordering == 'default':
+        dim_ordering = image_dim_ordering()
+    if dim_ordering == 'th':
+        return 'NCHW'
+    elif dim_ordering == 'tf':
+        return 'NHWC'
+    else:
+        raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
+
+
+def _layout_kernel(dim_ordering, kernel):
+    layout = _layout_from(dim_ordering)
+    if layout == 'NHWC':
+        layout_kernel = (kernel[1], kernel[2])
+    elif layout == 'NCHW':
+        layout_kernel = (kernel[2], kernel[3])
+    else:
+        raise ValueError('Unknown layout ' + str(dim_ordering))
+    return layout_kernel

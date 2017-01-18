@@ -26,6 +26,7 @@ from .. import callbacks as cbks
 if K.backend() == 'mxnet':
     import mxnet as mx
 
+
 def standardize_input_data(data, names, shapes=None,
                            check_batch_axis=True,
                            exception_prefix=''):
@@ -315,6 +316,7 @@ def weighted_objective(fn):
     into a sample-weighted, cost-masked objective function
     `fn(y_true, y_pred, weights, mask)`.
     """
+
     def weighted(y_true, y_pred, weights, mask=None):
         # score_array has ndim >= 2
         score_array = fn(y_true, y_pred)
@@ -487,8 +489,8 @@ class GeneratorEnqueuer(object):
         self._stop_event = None
         self.queue = None
 
-class Model(Container):
 
+class Model(Container):
     def compile(self, optimizer, loss, metrics=None, loss_weights=None,
                 sample_weight_mode=None, **kwargs):
         """Configures the model for training.
@@ -1790,6 +1792,7 @@ class Model(Container):
             return all_outs[0]
         return all_outs
 
+
 if K.backend() == 'mxnet':
     class MXModel(Model):
 
@@ -1804,7 +1807,7 @@ if K.backend() == 'mxnet':
             self._num_label = len(self._label_names)
             self._symbol = K.make_loss(self.total_loss.symbol)
             self._param_names = [n for n in self._symbol.list_arguments() \
-                                    if n not in self._data_names + self._label_names]
+                                 if n not in self._data_names + self._label_names]
             self._aux_names = self._symbol.list_auxiliary_states()
             self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
             self._train_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
@@ -1812,20 +1815,25 @@ if K.backend() == 'mxnet':
             self._pred_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
                                              label_names=None, context=self._context)
             self._weights_dirty = False
+            self.batch_size = None
 
             def train_function(inputs):
+                inputs = _pad_end_batch(inputs)
+
                 assert self._num_data + self._num_label == len(inputs)
                 data = [K.mx.nd.array(x, dtype=s.dtype) \
-                            for s, x in zip(self.inputs, inputs[:self._num_data])]
+                        for s, x in zip(self.inputs, inputs[:self._num_data])]
                 label = [K.mx.nd.array(x, dtype=s.dtype) \
-                            for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
+                         for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
                 if not self._train_mod.binded:
-                    data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in zip(self.inputs, data)]
+                    data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
+                                   zip(self.inputs, data)]
                     label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
-                                        for s, arr in zip(self.targets + self.sample_weights, label)]
+                                    for s, arr in zip(self.targets + self.sample_weights, label)]
                     self._train_mod.bind(data_shapes=data_shapes, label_shapes=label_shapes)
                     self._set_weights(self._train_mod)
                     self._train_mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
+                    self.batch_size = inputs[0].shape[0]
 
                 batch = K.mx.io.DataBatch(data=data, label=label)
                 self._train_mod.forward_backward(batch)
@@ -1834,6 +1842,24 @@ if K.backend() == 'mxnet':
                 return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
 
             self.train_function = train_function
+
+            def _pad_end_batch(inputs):
+                size = 0
+                if self.batch_size is not None:
+                    size = self.batch_size - inputs[0].shape[0]
+                if size > 0:
+                    new_ins_batch = []
+                    for x in inputs:
+                        if len(x.shape) == 4:
+                            x_tile = np.tile(x, (2, 1, 1, 1))
+                        if len(x.shape) == 2:
+                            x_tile = np.tile(x, (2, 1))
+                        if len(x.shape) == 1:
+                            x_tile = np.tile(x, (2,))
+                        new_ins_batch.append(x_tile[0:self.batch_size])
+                    new_ins_batch[2][inputs[0].shape[0]:] = 0
+                    inputs = new_ins_batch
+                return inputs
 
         def _sync_weights(self):
             if self._weights_dirty:
@@ -1860,4 +1886,6 @@ if K.backend() == 'mxnet':
         def _make_predict_function(self):
             pass
 
+
     Model = MXModel
+
