@@ -214,21 +214,6 @@ def _autogen_name(prefix):
     return prefix + str(get_uid(prefix))
 
 
-def get_value(x):
-    return eval(x)
-
-
-def batch_get_value(xs):
-    """Returns the value of more than one tensor variable,
-    as a list of Numpy arrays.
-    """
-    return [get_value(x) for x in xs]
-
-
-def get_variable_shape(x):
-    return x.shape
-
-
 def variable(value, dtype=None, name=None):
     """Instantiates a variable and returns it.
 
@@ -505,7 +490,12 @@ def ones(shape, dtype=None, name=None):
                [ 1.,  1.,  1.,  1.]], dtype=float32)
     ```
     """
-    raise NotImplementedError
+    if dtype is None:
+        dtype = floatx()
+    value = mx.nd.ones(shape, dtype=dtype)
+    if name is None:
+        name = _autogen_name('oneinit')
+    return KerasTensor(value, name)
 
 
 def eye(size, dtype=None, name=None):
@@ -552,7 +542,10 @@ def zeros_like(x, name=None):
                [ 0.,  0.,  0.]], dtype=float32)
     ```
     """
-    raise NotImplementedError
+    value = mx.nd.zeros(x.shape, dtype=x.dtype)
+    if name is None:
+        name = _autogen_name('zerolikeinit')
+    return KerasTensor(value, name)
 
 
 def ones_like(x, name=None):
@@ -575,7 +568,10 @@ def ones_like(x, name=None):
                [ 1.,  1.,  1.]], dtype=float32)
     ```
     """
-    raise NotImplementedError
+    value = mx.nd.ones(x.shape, dtype=x.dtype)
+    if name is None:
+        name = _autogen_name('zerolikeinit')
+    return KerasTensor(value, name)
 
 
 def random_uniform_variable(shape, low, high, dtype=None,
@@ -642,7 +638,12 @@ def random_normal_variable(shape, mean, scale, dtype=None,
                [ 0.92629528,  0.28055015,  1.70484698]], dtype=float32)
     ```
     """
-    raise NotImplementedError
+    if dtype is None:
+        dtype = floatx()
+    value = mx.random.normal(mean, scale, shape, dtype=dtype)
+    if name is None:
+        name = _autogen_name('randinit')
+    return KerasTensor(value, name)
 
 
 def count_params(x):
@@ -702,19 +703,23 @@ def cast(x, dtype):
 
 # UPDATES OPS
 
-
+# Don't need
 def update(x, new_x):
+
     raise NotImplementedError
 
 
+# Don't need
 def update_add(x, increment):
     raise NotImplementedError
 
 
+# Don't need
 def update_sub(x, decrement):
     raise NotImplementedError
 
 
+# Don't need
 def moving_average_update(variable, value, momentum):
     raise NotImplementedError
 
@@ -818,7 +823,7 @@ def batch_dot(x, y, axes=None):
         (32, 1, 30)
     ```
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.batch_dot(lhs=x.symbol, rhs=y.symbol))
 
 
 def transpose(x):
@@ -900,7 +905,7 @@ def max(x, axis=None, keepdims=False):
     # Returns
         A tensor with maximum values of `x`.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.max(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
 def min(x, axis=None, keepdims=False):
@@ -917,7 +922,7 @@ def min(x, axis=None, keepdims=False):
     # Returns
         A tensor with miminum values of `x`.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.min(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
 def sum(x, axis=None, keepdims=False):
@@ -934,7 +939,7 @@ def sum(x, axis=None, keepdims=False):
     # Returns
         A tensor with sum of `x`.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.sum(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
 def prod(x, axis=None, keepdims=False):
@@ -951,7 +956,7 @@ def prod(x, axis=None, keepdims=False):
     # Returns
         A tensor with the product of elements of `x`.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.prod(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
 def var(x, axis=None, keepdims=False):
@@ -985,6 +990,7 @@ def std(x, axis=None, keepdims=False):
     # Returns
         A tensor with the standard deviation of elements of `x`.
     """
+    raise NotImplementedError
 
 
 def mean(x, axis=None, keepdims=False):
@@ -1061,8 +1067,7 @@ def argmax(x, axis=-1):
 def square(x):
     """Element-wise square.
     """
-    ret = mx.sym.square(data=x.symbol)
-    return KerasSymbol(ret)
+    return KerasSymbol(mx.sym.square(data=x.symbol))
 
 
 def abs(x):
@@ -1074,7 +1079,7 @@ def abs(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.abs(data=x.symbol))
 
 
 def sqrt(x):
@@ -1086,7 +1091,7 @@ def sqrt(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.sqrt(data=x.symbol))
 
 
 def exp(x):
@@ -1098,7 +1103,7 @@ def exp(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.exp(data=x.symbol))
 
 
 def log(x):
@@ -1110,7 +1115,7 @@ def log(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.log(data=x.symbol))
 
 
 def round(x):
@@ -1122,7 +1127,7 @@ def round(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.round(data=x.symbol))
 
 
 def sign(x):
@@ -1134,7 +1139,7 @@ def sign(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.sign(data=x.symbol))
 
 
 def pow(x, a):
@@ -1146,6 +1151,11 @@ def pow(x, a):
     # Returns
         A tensor.
     """
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    if isinstance(a, KerasSymbol):
+        a = a.symbol
+    return KerasSymbol(mx.sym.pow(base=x, exp=a))
 
 
 def clip(x, min_value, max_value):
@@ -1154,7 +1164,11 @@ def clip(x, min_value, max_value):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    if max_value is not None and max_value < min_value:
+        max_value = min_value
+    if max_value is None:
+        max_value = np.inf
+    return KerasSymbol(mx.sym.clip(src=x.symbol, a_min=min_value, a_max=max_value))
 
 
 def equal(x, y):
@@ -1177,7 +1191,7 @@ def greater(x, y):
     # Returns
         A bool tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(x.symbol > y.symbol)
 
 
 def greater_equal(x, y):
@@ -1186,7 +1200,7 @@ def greater_equal(x, y):
     # Returns
         A bool tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(x.symbol >= y.symbol)
 
 
 def lesser(x, y):
@@ -1195,7 +1209,7 @@ def lesser(x, y):
     # Returns
         A bool tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(x.symbol < y.symbol)
 
 
 def lesser_equal(x, y):
@@ -1204,6 +1218,7 @@ def lesser_equal(x, y):
     # Returns
         A bool tensor.
     """
+    return KerasSymbol(x.symbol <= y.symbol)
 
 
 def maximum(x, y):
@@ -1212,7 +1227,7 @@ def maximum(x, y):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.maximum(left=x.symbol, right=y.symbol))
 
 
 def minimum(x, y):
@@ -1221,7 +1236,7 @@ def minimum(x, y):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.minimum(left=x.symbol, right=y.symbol))
 
 
 def sin(x):
@@ -1230,7 +1245,7 @@ def sin(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.sin(data=x.symbol))
 
 
 def cos(x):
@@ -1242,7 +1257,7 @@ def cos(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.cos(data=x.symbol))
 
 
 def normalize_batch_in_training(x, gamma, beta,
@@ -1262,7 +1277,7 @@ def concatenate(tensors, axis=-1):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.Concat(*tensors, dim=axis))
 
 
 def reshape(x, shape):
@@ -1347,7 +1362,8 @@ def arange(start, stop=None, step=1, dtype='int32'):
     The default type of the returned tensor is `'int32'` to
     match TensorFlow's default.
     """
-    raise NotImplementedError
+    dtype = np.dtype(dtype)
+    return KerasSymbol(mx.sym.arange(start=start, stop=stop, step=step, dtype=dtype))
 
 
 def tile(x, n):
@@ -1501,7 +1517,7 @@ def get_value(x):
     # Returns
         A Numpy array.
     """
-    raise NotImplementedError
+    return eval(x)
 
 
 def batch_get_value(xs):
@@ -1513,7 +1529,7 @@ def batch_get_value(xs):
     # Returns
         A list of Numpy arrays.
     """
-    raise NotImplementedError
+    return [get_value(x) for x in xs]
 
 
 def set_value(x, value):
@@ -1543,7 +1559,7 @@ def get_variable_shape(x):
     # Returns
         A tuple of integers.
     """
-    raise NotImplementedError
+    return x.shape
 
 
 def print_tensor(x, message=''):
@@ -1705,7 +1721,7 @@ def elu(x, alpha=1.):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.LeakyReLU(data=x.symbol, act_type='elu', slope=alpha))
 
 
 def softmax(x):
@@ -1730,7 +1746,7 @@ def softplus(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.Activation(data=x.symbol, act_type='softrelu'))
 
 
 def softsign(x):
@@ -1786,7 +1802,7 @@ def sigmoid(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.Activation(data=x.symbol, act_type='sigmoid'))
 
 
 def hard_sigmoid(x):
@@ -1813,7 +1829,7 @@ def tanh(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.tanh(data=x.symbol))
 
 
 def dropout(x, level, noise_shape=None, seed=None):
@@ -1897,9 +1913,9 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     # Returns
         A tensor, result of 2D convolution.
     """
-    layout_kernel = _layout_kernel(dim_ordering, kernel.shape)
+    layout_kernel, nb_filter = _layout_kernel2(dim_ordering, kernel.shape)
     s = mx.sym.Convolution(data=x.symbol, name=kernel.name, kernel=layout_kernel, stride=strides,
-                           num_filter=kernel.shape[0], weight=kernel.symbol, no_bias=True)
+                           num_filter=nb_filter, weight=kernel.symbol, no_bias=True)
     return KerasSymbol(s)
 
 
@@ -1922,7 +1938,10 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1),
     # Returns
         A tensor, result of transposed 2D convolution.
     """
-    raise NotImplementedError
+    layout_kernel, nb_filter = _layout_kernel2(dim_ordering, kernel.shape)
+    s = mx.sym.Deconvolution(data=x.symbol, name=kernel.name, kernel=layout_kernel, stride=strides,
+                             num_filter=nb_filter, weight=kernel.symbol, no_bias=True, target_shape=output_shape)
+    return KerasSymbol(s)
 
 
 def atrous_conv2d(x, kernel, rate=1,
@@ -1971,7 +1990,10 @@ def conv3d(x, kernel, strides=(1, 1, 1),
     # Returns
         A tensor, result of 3D convolution.
     """
-    raise NotImplementedError
+    layout_kernel, nb_filter = _layout_kernel3(dim_ordering, kernel.shape)
+    s = mx.sym.Convolution(data=x.symbol, name=kernel.name, kernel=layout_kernel, stride=strides,
+                           num_filter=nb_filter, weight=kernel.symbol, no_bias=True)
+    return KerasSymbol(s)
 
 
 def pool2d(x, pool_size, strides=(1, 1),
@@ -1991,7 +2013,6 @@ def pool2d(x, pool_size, strides=(1, 1),
     """
     s = mx.sym.Pooling(data=x.symbol, kernel=pool_size, pool_type=pool_mode, pooling_convention=border_mode,
                        stride=strides)
-    # print(SymbolDoc.get_output_shape(s, convolution2d_input_1=(128, 1, 28, 28), ))
     return KerasSymbol(s)
 
 
@@ -2009,7 +2030,9 @@ def pool3d(x, pool_size, strides=(1, 1, 1), border_mode='valid',
     # Returns
         A tensor, result of 3D pooling.
     """
-    raise NotImplementedError
+    s = mx.sym.Pooling(data=x.symbol, kernel=pool_size, pool_type=pool_mode, pooling_convention=border_mode,
+                       stride=strides)
+    return KerasSymbol(s)
 
 
 def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
@@ -2148,23 +2171,29 @@ def foldr(fn, elems, initializer=None, name=None):
     raise NotImplementedError
 
 
-def _layout_from(dim_ordering):
+def _layout_kernel2(dim_ordering, kernel):
     if dim_ordering == 'default':
         dim_ordering = image_dim_ordering()
     if dim_ordering == 'th':
-        return 'NCHW'
+        layout_kernel = (kernel[2], kernel[3])
+        nb_filter = kernel[0]
     elif dim_ordering == 'tf':
-        return 'NHWC'
+        layout_kernel = (kernel[0], kernel[1])
+        nb_filter = kernel[3]
     else:
         raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
+    return layout_kernel, nb_filter
 
 
-def _layout_kernel(dim_ordering, kernel):
-    layout = _layout_from(dim_ordering)
-    if layout == 'NHWC':
-        layout_kernel = (kernel[1], kernel[2])
-    elif layout == 'NCHW':
+def _layout_kernel3(dim_ordering, kernel):
+    if dim_ordering == 'default':
+        dim_ordering = image_dim_ordering()
+    if dim_ordering == 'th':
         layout_kernel = (kernel[2], kernel[3])
+        nb_filter = kernel[0]
+    elif dim_ordering == 'tf':
+        layout_kernel = (kernel[0], kernel[1])
+        nb_filter = kernel[3]
     else:
-        raise ValueError('Unknown layout ' + str(dim_ordering))
-    return layout_kernel
+        raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
+    return layout_kernel, nb_filter
