@@ -646,11 +646,17 @@ if K.backend() == 'mxnet':
             Optimizer.__init__(self)
             K.mx.optimizer.SGD.__init__(self, learning_rate=lr, momentum=momentum, **kwargs)
 
-    class AdaDelta(Optimizer, K.mx.optimizer.AdaDelta):
+    class Adadelta(Optimizer, K.mx.optimizer.AdaDelta):
         def __init__(self,  rho=0.90, epsilon=1e-5, **kwargs):
             Optimizer.__init__(self)
             K.mx.optimizer.AdaDelta.__init__(self, rho=rho, epsilon=epsilon, **kwargs)
 
+    class RMSprop(Optimizer, K.mx.optimizer.RMSProp):
+        def __init__(self, lr=0.001, rho=0.9, epsilon=1e-8, decay=0.,
+                 **kwargs):
+            Optimizer.__init__(self)
+            #TODO: Map all parameters
+            K.mx.optimizer.RMSProp.__init__(self, learning_rate=lr, gamma2=rho)
 # Aliases.
 
 sgd = SGD
