@@ -1843,6 +1843,30 @@ if K.backend() == 'mxnet':
 
             self.train_function = train_function
 
+            def test_function(inputs):
+                inputs = _pad_end_batch(inputs)
+                assert self._num_data + self._num_label == len(inputs)
+                data = [K.mx.nd.array(x, dtype=s.dtype) \
+                        for s, x in zip(self.inputs, inputs[:self._num_data])]
+                label = [K.mx.nd.array(x, dtype=s.dtype) \
+                         for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
+                if not self._train_mod.binded:
+                    data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
+                                   zip(self.inputs, data)]
+                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
+                                    for s, arr in zip(self.targets + self.sample_weights, label)]
+                    self._train_mod.bind(data_shapes=data_shapes, label_shapes=label_shapes)
+                    self._set_weights(self._train_mod)
+                    self._train_mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
+                    self.batch_size = inputs[0].shape[0]
+
+                batch = K.mx.io.DataBatch(data=data, label=label)
+                self._train_mod.forward(batch)
+                return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
+
+            self.test_function = test_function
+            self.predict_function = test_function
+
             def _pad_end_batch(inputs):
                 size = 0
                 if self.batch_size is not None:
@@ -1850,12 +1874,13 @@ if K.backend() == 'mxnet':
                 if size > 0:
                     new_ins_batch = []
                     for x in inputs:
+                        tile_num = self.batch_size // x.shape[0] + 1
                         if len(x.shape) == 4:
-                            x_tile = np.tile(x, (2, 1, 1, 1))
+                            x_tile = np.tile(x, (tile_num, 1, 1, 1))
                         if len(x.shape) == 2:
-                            x_tile = np.tile(x, (2, 1))
+                            x_tile = np.tile(x, (tile_num, 1))
                         if len(x.shape) == 1:
-                            x_tile = np.tile(x, (2,))
+                            x_tile = np.tile(x, (tile_num,))
                         new_ins_batch.append(x_tile[0:self.batch_size])
                     new_ins_batch[2][inputs[0].shape[0]:] = 0
                     inputs = new_ins_batch
