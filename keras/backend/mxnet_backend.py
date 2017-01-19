@@ -105,14 +105,15 @@ class KerasTensor(object):
         self.tensor = ndarray
         self._uses_learning_phase = False
         if name is not None:
-            self.name_ = name
+            self._name = name
         else:
-            self.name_ = _autogen_name('tensor')
-        _bind_values[name] = ndarray
+            self._name = _autogen_name('tensor')
+        _bind_values[self._name] = ndarray
+        self._symbol = mx.sym.Variable(self._name, shape=self.shape, dtype=self.dtype)
 
     @property
     def name(self):
-        return self.name_
+        return self._name
 
     @property
     def dtype(self):
@@ -127,7 +128,7 @@ class KerasTensor(object):
 
     @property
     def symbol(self):
-        return mx.sym.Variable(self.name, shape=self.shape, dtype=self.dtype)
+        return self._symbol
 
     def __add__(self, other):
         if isinstance(other, KerasTensor):
@@ -1469,7 +1470,7 @@ def temporal_padding(x, padding=1):
     # Returns
         A padded 3D tensor.
     """
-    raise NotImplementedError
+    return asymmetric_temporal_padding(x, padding, padding)
 
 
 def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
@@ -1479,7 +1480,9 @@ def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
     # Returns
         A padded 3D tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+                                  constant_value=0,
+                                  pad_width=(0, 0, left_pad, right_pad, 0, 0)))
 
 
 def spatial_2d_padding(x, padding=(1, 1), dim_ordering='default'):
@@ -1489,7 +1492,21 @@ def spatial_2d_padding(x, padding=(1, 1), dim_ordering='default'):
     # Returns
         A padded 4D tensor.
     """
-    raise NotImplementedError
+    if dim_ordering == 'default':
+        dim_ordering = image_dim_ordering()
+    if dim_ordering not in {'th', 'tf'}:
+        raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
+
+    if dim_ordering == 'th':
+        pattern = (0, 0, 0, 0,
+                   padding[0], padding[0], padding[1], padding[1])
+    else:
+        pattern = (0, 0,
+                   padding[0], padding[0], padding[1], padding[1],
+                   0, 0)
+    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+                                  constant_value=0,
+                                  pad_width=pattern))
 
 
 def asymmetric_spatial_2d_padding(x, top_pad=1, bottom_pad=1,
@@ -1502,7 +1519,24 @@ def asymmetric_spatial_2d_padding(x, top_pad=1, bottom_pad=1,
     # Returns
         A padded 4D tensor.
     """
-    raise NotImplementedError
+    if dim_ordering == 'default':
+        dim_ordering = image_dim_ordering()
+    if dim_ordering not in {'th', 'tf'}:
+        raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
+
+    if dim_ordering == 'th':
+        pattern = (0, 0,
+                   0, 0,
+                   top_pad, bottom_pad,
+                   left_pad, right_pad)
+    else:
+        pattern = (0, 0,
+                   top_pad, bottom_pad,
+                   left_pad, right_pad,
+                   0, 0)
+    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+                                  constant_value=0,
+                                  pad_width=pattern))
 
 
 def spatial_3d_padding(x, padding=(1, 1, 1), dim_ordering='default'):
@@ -1515,7 +1549,30 @@ def spatial_3d_padding(x, padding=(1, 1, 1), dim_ordering='default'):
     # Returns
         A padded 5D tensor.
     """
-    raise NotImplementedError
+    if dim_ordering == 'default':
+        dim_ordering = image_dim_ordering()
+    if dim_ordering not in {'th', 'tf'}:
+        raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
+
+    if dim_ordering == 'th':
+        pattern = (
+            0, 0,
+            0, 0,
+            padding[0], padding[0],
+            padding[1], padding[1],
+            padding[2], padding[2]
+        )
+    else:
+        pattern = (
+            0, 0,
+            padding[0], padding[0],
+            padding[1], padding[1],
+            padding[2], padding[2],
+            0, 0
+        )
+    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+                                  constant_value=0,
+                                  pad_width=pattern))
 
 
 def stack(x):
@@ -1585,6 +1642,7 @@ def set_value(x, value):
         x = value
     return None
 
+
 def batch_set_value(tuples):
     """Sets the values of many tensor variables at once.
     It returns `None`.
@@ -1593,7 +1651,9 @@ def batch_set_value(tuples):
         tuples: a list of tuples `(tensor, value)`.
             `value` should be a Numpy array.
     """
-    raise NotImplementedError
+    for p, w in tuples:
+        set_value(p, w)
+    return None
 
 
 def get_variable_shape(x):
@@ -1626,13 +1686,21 @@ def make_loss(variables):
 # GRAPH MANIPULATION
 class Function(object):
     def __init__(self, inputs, output, updates=[], **kwargs):
-        print('inputs', [x.name for x in inputs])
-        print('output', [x.name for x in output])
-        print('updates', updates)
+        self.inputs = inputs
+        self.output = output
+        self.updates = updates
 
     def __call__(self, inputs):
-        print('call', inputs)
-        return None
+        ret_outputs = []
+        for x in self.output:
+            data = {k.name: v for k, v in zip(self.inputs, inputs)}
+            data_shapes = {k.name: v.shape for k, v in zip(self.inputs, inputs)}
+            executor = x.symbol.simple_bind(mx.cpu(), grad_req='null', **data_shapes)
+            for v in executor.arg_dict:
+                executor.arg_dict[v][:] = data[v]
+            outputs = executor.forward(is_train=_LEARNING_PHASE)
+            ret_outputs.append(outputs[0].asnumpy())
+        return ret_outputs
 
 
 def function(inputs, outputs, updates=[], **kwargs):
