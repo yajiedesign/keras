@@ -427,7 +427,6 @@ class Layer(object):
         return weight
 
     def assert_input_compatibility(self, input):
-        print(input)
         """This checks that the tensor(s) `input`
         verify the input assumptions of the layer
         (if any). If not, exceptions are raised.

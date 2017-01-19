@@ -54,6 +54,25 @@ def _typename(t):
 def is_sparse(tensor):
     return False
 
+def _convert_string_dtype(dtype):
+    if dtype == 'float16':
+        return np.float16
+    if dtype == 'float32':
+        return np.float32
+    elif dtype == 'float64':
+        return np.float64
+    elif dtype == 'int16':
+        return np.int16
+    elif dtype == 'int32':
+        return np.int32
+    elif dtype == 'int64':
+        return np.int64
+    elif dtype == 'uint8':
+        return np.int8
+    elif dtype == 'uint16':
+        return np.uint16
+    else:
+        raise ValueError('Unsupported dtype:', dtype)
 
 def to_dense(tensor):
     """Converts a sparse tensor into a dense tensor
@@ -111,8 +130,22 @@ class KerasTensor(object):
         return mx.sym.Variable(self.name, shape=self.shape, dtype=self.dtype)
 
     def __add__(self, other):
-        return KerasTensor(mx.tensor.__add__(other))
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__add__(other.tensor))
+        else:
+            return KerasTensor(self.tensor.__add__(other))
 
+    def __sub__(self, other):
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__sub__(other.tensor))
+        else:
+            return KerasTensor(self.tensor.__sub__(other))
+
+    def __mul__(self, other):
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__mul__(other.tensor))
+        else:
+            return KerasTensor(self.tensor.__mul__(other))
 
 class KerasSymbol(object):
     def __init__(self, symbol):
@@ -243,6 +276,7 @@ def variable(value, dtype=None, name=None):
         name = _autogen_name('variable')
     if dtype is None:
         dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
     if isinstance(value, float):
         value = np.array([value])
     ndarray = mx.nd.array(value, dtype=dtype)
@@ -275,6 +309,9 @@ def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
         <tf.Tensor 'Placeholder_4:0' shape=(2, 4, 5) dtype=float32>
     ```
     """
+    if dtype is None:
+        dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
     if name is None:
         name = _autogen_name('placeholder')
     if not shape:
@@ -316,7 +353,7 @@ def shape(x):
     """
     #   if hasattr(x, '_keras_shape'):
     #       return tuple([0 if x is None else x for x in x._keras_shape])
-    if isinstance(x, KerasSymbol):
+    if isinstance(x, KerasSymbol) or isinstance(x, KerasTensor):
         return x.get_shape()
     else:
         return None
@@ -373,10 +410,8 @@ def ndim(x):
     ```
     """
     s = shape(x)
-    if s is None:
-        return None
-    else:
-        return len(s)
+    assert s
+    return len(s)
 
 
 def dtype(x):
@@ -431,13 +466,13 @@ def eval(x):
     if isinstance(x, KerasTensor):
         return x.tensor.asnumpy()
     elif isinstance(x, KerasSymbol):
-        executor = x.symbol.simple_bind(mx.cpu())
+        executor = x.symbol.simple_bind(mx.cpu(), grad_req='null')
         for v in executor.arg_dict:
             _bind_values[v].copyto(executor.arg_dict[v])
         outputs = executor.forward(is_train=_LEARNING_PHASE)
         return outputs[0].asnumpy()
     else:
-        raise ValueError('value is not supported')
+        return x
 
 
 def zeros(shape, dtype=None, name=None):
@@ -463,6 +498,7 @@ def zeros(shape, dtype=None, name=None):
     """
     if dtype is None:
         dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
     value = mx.nd.zeros(shape, dtype=dtype)
     if name is None:
         name = _autogen_name('zeroinit')
@@ -492,6 +528,7 @@ def ones(shape, dtype=None, name=None):
     """
     if dtype is None:
         dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
     value = mx.nd.ones(shape, dtype=dtype)
     if name is None:
         name = _autogen_name('oneinit')
@@ -542,7 +579,7 @@ def zeros_like(x, name=None):
                [ 0.,  0.,  0.]], dtype=float32)
     ```
     """
-    value = mx.nd.zeros(x.shape, dtype=x.dtype)
+    value = mx.nd.zeros(shape(x), dtype=dtype(x))
     if name is None:
         name = _autogen_name('zerolikeinit')
     return KerasTensor(value, name)
@@ -568,7 +605,7 @@ def ones_like(x, name=None):
                [ 1.,  1.,  1.]], dtype=float32)
     ```
     """
-    value = mx.nd.ones(x.shape, dtype=x.dtype)
+    value = mx.nd.ones(shape(x), dtype(x))
     if name is None:
         name = _autogen_name('zerolikeinit')
     return KerasTensor(value, name)
@@ -640,6 +677,7 @@ def random_normal_variable(shape, mean, scale, dtype=None,
     """
     if dtype is None:
         dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
     value = mx.random.normal(mean, scale, shape, dtype=dtype)
     if name is None:
         name = _autogen_name('randinit')
@@ -734,6 +772,7 @@ def dot(x, y):
 
     # Arguments
         x: Tensor or variable.
+    dtype = _convert_string_dtype(dtype)
         y: Tensor or variable.
 
     # Returns
@@ -767,8 +806,6 @@ def dot(x, y):
         (2, 4, 5)
     ```
     """
-    print(x.symbol)
-    print(y.symbol)
     return KerasSymbol(mx.sym.dot(lhs=x.symbol, rhs=y.symbol))
 
 
@@ -905,6 +942,7 @@ def max(x, axis=None, keepdims=False):
     # Returns
         A tensor with maximum values of `x`.
     """
+    axis = _normalize_axis(axis, ndim(x))
     return KerasSymbol(mx.sym.max(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -922,6 +960,7 @@ def min(x, axis=None, keepdims=False):
     # Returns
         A tensor with miminum values of `x`.
     """
+    axis = _normalize_axis(axis, ndim(x))
     return KerasSymbol(mx.sym.min(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -939,6 +978,7 @@ def sum(x, axis=None, keepdims=False):
     # Returns
         A tensor with sum of `x`.
     """
+    axis = _normalize_axis(axis, ndim(x))
     return KerasSymbol(mx.sym.sum(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -956,6 +996,7 @@ def prod(x, axis=None, keepdims=False):
     # Returns
         A tensor with the product of elements of `x`.
     """
+    axis = _normalize_axis(axis, ndim(x))
     return KerasSymbol(mx.sym.prod(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -1277,6 +1318,8 @@ def concatenate(tensors, axis=-1):
     # Returns
         A tensor.
     """
+    axis = _normalize_axis(axis, ndim(tensors[0]))
+    tensors = [t.symbol for t in tensors]
     return KerasSymbol(mx.sym.Concat(*tensors, dim=axis))
 
 
@@ -1536,8 +1579,11 @@ def set_value(x, value):
     """Sets the value of a variable,
     from a Numpy array. It returns `None`.
     """
-    raise NotImplementedError
-
+    if isinstance(x, KerasTensor):
+        x.tensor = mx.nd.array(x)
+    else:
+        x = value
+    return None
 
 def batch_set_value(tuples):
     """Sets the values of many tensor variables at once.
@@ -2067,7 +2113,9 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     # Returns
         A tensor.
     """
-
+    if dtype is None:
+        dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
     return KerasVariable(
         random_uniform_variable(shape, low, high, dtype=dtype, seed=seed).symbol)
 
