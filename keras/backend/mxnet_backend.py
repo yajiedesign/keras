@@ -148,6 +148,33 @@ class KerasTensor(object):
         else:
             return KerasTensor(self.tensor.__mul__(other))
 
+    def __div__(self, other):
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__div__(other.tensor))
+        else:
+            return KerasTensor(self.tensor.__div__(other))
+
+    def __rdiv__(self, other):
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__rdiv__(other.tensor))
+        else:
+            return KerasTensor(self.tensor.__rdiv__(other))
+
+    def __truediv__(self, other):
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__truediv__(other.tensor))
+        elif isinstance(other, KerasSymbol):
+            return KerasSymbol(self.symbol.__truediv__(other.symbol))
+        else:
+            return KerasTensor(self.tensor.__truediv__(other))
+
+    def __rtruediv__(self, other):
+        if isinstance(other, KerasTensor):
+            return KerasTensor(self.tensor.__rtruediv__(other.tensor))
+        else:
+            return KerasTensor(self.tensor.__rtruediv__(other))
+
+
 class KerasSymbol(object):
     def __init__(self, symbol):
         if not isinstance(symbol, mx.symbol.Symbol):
@@ -471,7 +498,10 @@ def eval(x):
         for v in executor.arg_dict:
             _bind_values[v].copyto(executor.arg_dict[v])
         outputs = executor.forward(is_train=_LEARNING_PHASE)
-        return outputs[0].asnumpy()
+        ret = outputs[0].asnumpy()
+        if ret.shape == (1,):
+            return ret[0]
+        return ret
     else:
         return x
 
@@ -1210,7 +1240,7 @@ def clip(x, min_value, max_value):
         max_value = min_value
     if max_value is None:
         max_value = np.inf
-    return KerasSymbol(mx.sym.clip(src=x.symbol, a_min=min_value, a_max=max_value))
+    return KerasSymbol(mx.sym.clip(data=x.symbol, a_min=min_value, a_max=max_value))
 
 
 def equal(x, y):
