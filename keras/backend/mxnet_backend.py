@@ -126,37 +126,53 @@ class KerasTensor(object):
     def get_shape(self):
         return self.tensor.shape
 
+    def get_type(self):
+        return self.dtype
+
     @property
     def symbol(self):
         return self._symbol
 
+    def __abs__(self):
+        return KerasTensor(abs(self.tensor))
+
     def __add__(self, other):
         if isinstance(other, KerasTensor):
             return KerasTensor(self.tensor.__add__(other.tensor))
+        elif isinstance(other, KerasSymbol):
+            return KerasSymbol(self.symbol.__add__(other.symbol))
         else:
             return KerasTensor(self.tensor.__add__(other))
 
     def __sub__(self, other):
         if isinstance(other, KerasTensor):
             return KerasTensor(self.tensor.__sub__(other.tensor))
+        elif isinstance(other, KerasSymbol):
+            return KerasSymbol(self.symbol.__sub__(other.symbol))
         else:
             return KerasTensor(self.tensor.__sub__(other))
 
     def __mul__(self, other):
         if isinstance(other, KerasTensor):
             return KerasTensor(self.tensor.__mul__(other.tensor))
+        elif isinstance(other, KerasSymbol):
+            return KerasSymbol(self.symbol.__mul__(other.symbol))
         else:
             return KerasTensor(self.tensor.__mul__(other))
 
     def __div__(self, other):
         if isinstance(other, KerasTensor):
             return KerasTensor(self.tensor.__div__(other.tensor))
+        elif isinstance(other, KerasSymbol):
+            return KerasSymbol(self.symbol.__div__(other.symbol))
         else:
             return KerasTensor(self.tensor.__div__(other))
 
     def __rdiv__(self, other):
         if isinstance(other, KerasTensor):
             return KerasTensor(self.tensor.__rdiv__(other.tensor))
+        elif isinstance(other, KerasSymbol):
+            return KerasSymbol(self.symbol.__rdiv__(other.symbol))
         else:
             return KerasTensor(self.tensor.__rdiv__(other))
 
@@ -199,17 +215,38 @@ class KerasSymbol(object):
         t = out_type[0]
         return _typename(t)
 
+    def __abs__(self):
+        return KerasSymbol(mx.sym.abs(self.symbol))
+
     def __add__(self, other):
-        return KerasSymbol(
-            mx.sym.broadcast_add(
-                lhs=self.symbol,
-                rhs=other.symbol))
+        if isinstance(other, KerasSymbol) or \
+            isinstance(other, KerasTensor):
+            return KerasSymbol(
+                mx.sym.broadcast_add(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_add(
+                    lhs=self.symbol,
+                    rhs=other))
+
+    def __radd__(self, other):
+        return self.__add__(other)
 
     def __sub__(self, other):
         return KerasSymbol(
             mx.sym.broadcast_minus(
                 lhs=self.symbol,
                 rhs=other.symbol))
+
+    def __rsub__(self, other):
+        return self.__neg__().__add__(
+                other)
+
+    def __neg__(self):
+        return KerasSymbol(
+                self.symbol * (-1.0))
 
     def __div__(self, other):
         if isinstance(other, Number):
@@ -305,7 +342,7 @@ def variable(value, dtype=None, name=None):
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    if isinstance(value, float):
+    if isinstance(value, Number):
         value = np.array([value])
     ndarray = mx.nd.array(value, dtype=dtype)
     sym = KerasTensor(ndarray, name)
@@ -438,7 +475,6 @@ def ndim(x):
     ```
     """
     s = shape(x)
-    assert s
     return len(s)
 
 
@@ -953,8 +989,10 @@ def _normalize_axis(axis, ndim):
         for i, a in enumerate(axis):
             if a is not None and a < 0:
                 axis[i] = a % ndim
+    elif axis is None:
+        return ()
     else:
-        if axis is not None and axis < 0:
+        if axis < 0:
             axis = axis % ndim
     return axis
 
@@ -1667,7 +1705,7 @@ def set_value(x, value):
     from a Numpy array. It returns `None`.
     """
     if isinstance(x, KerasTensor):
-        x.tensor = mx.nd.array(x)
+        x.tensor = mx.nd.array(value)
     else:
         x = value
     return None
