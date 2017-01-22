@@ -1817,6 +1817,10 @@ if K.backend() == 'mxnet':
             self.batch_size = None
 
             def adjust_module(inputs):
+                is_train = None
+                if self._num_data + self._num_label == len(inputs) -1:
+                    is_train = inputs[-1] != 0.
+                    inputs=inputs[:-1]
                 assert self._num_data + self._num_label == len(inputs)
                 data = [K.mx.nd.array(x, dtype=s.dtype) \
                         for s, x in zip(self.inputs, inputs[:self._num_data])]
@@ -1838,10 +1842,10 @@ if K.backend() == 'mxnet':
                                     for s, arr in zip(self.targets + self.sample_weights, label)]
                     self._train_mod.reshape(data_shapes, label_shapes)
                     self.batch_size = inputs[0].shape[0]
-                return data, label
+                return data, label, is_train
 
             def train_function(inputs):
-                data, label = adjust_module(inputs)
+                data, label, _ = adjust_module(inputs)
                 batch = K.mx.io.DataBatch(data=data, label=label)
                 self._train_mod.forward_backward(batch)
                 self._train_mod.update()
@@ -1851,11 +1855,7 @@ if K.backend() == 'mxnet':
             self.train_function = train_function
 
             def test_function(inputs):
-                is_train = None
-                if self._num_data + self._num_label == len(inputs) -1:
-                    is_train = inputs[-1] != 0.
-                    inputs=inputs[:-1]
-                data, label = adjust_module(inputs)
+                data, label, is_train = adjust_module(inputs)
 
                 batch = K.mx.io.DataBatch(data=data, label=label)
                 self._train_mod.forward(batch, is_train=is_train)
