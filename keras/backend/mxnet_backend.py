@@ -134,7 +134,7 @@ class KerasTensor(object):
         return self._symbol
 
     def __abs__(self):
-        return KerasTensor(abs(self.tensor))
+        return KerasTensor(mx.nd.abs(self.tensor))
 
     def __add__(self, other):
         if isinstance(other, Number):
@@ -848,8 +848,11 @@ def cast(x, dtype):
     """
     if isinstance(x, KerasTensor):
         return KerasTensor(mx.nd.Cast(x.tensor, dtype=dtype))
-    return KerasSymbol(
-        mx.sym.Cast(data=x.symbol, dtype=dtype))
+    elif isinstance(x, KerasSymbol):
+        return KerasSymbol(
+            mx.sym.Cast(data=x.symbol, dtype=dtype))
+    else:
+        return x.astype(dtype)
 
 
 # UPDATES OPS
@@ -1445,7 +1448,7 @@ def maximum(x, y):
     if t == mx.nd:
         return k(t.maximum(x, y))
     if t == mx.sym:
-        return k(t.maximum(letf=x, right=y))
+        return k(t.maximum(left=x, right=y))
 
 
 def minimum(x, y):
@@ -2016,6 +2019,8 @@ def relu(x, alpha=0., max_value=None):
         alpha: slope of negative section.
         max_value: saturation threshold.
     """
+    if isinstance(alpha, KerasTensor):
+        alpha = eval(alpha)
     if alpha != 0.:
         ret = mx.sym.LeakyReLU(data=x.symbol,
                                slope=alpha)
@@ -2072,8 +2077,8 @@ def softsign(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
-
+    return KerasSymbol(
+            x.symbol / (1+mx.sym.abs(x.symbol)))
 
 def categorical_crossentropy(output, target, from_logits=False):
     assert not from_logits
@@ -2135,8 +2140,8 @@ def hard_sigmoid(x):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
-
+    return KerasSymbol(
+            mx.sym.clip(0.2 * x.symbol + 0.5, a_min=0, a_max=1))
 
 def tanh(x):
     """Element-wise tanh.
@@ -2202,8 +2207,11 @@ def in_top_k(predictions, targets, k):
         A tensor of shape `batch_size` and type `bool`. `output_i` is `True` if
         `targets_i` is within top-k values of `predictions_i`
     """
-    raise NotImplementedError
-
+    return KerasSymbol(
+            mx.sym.Cast(data=
+            mx.sym.topk(data=predictions.symbol,
+                k = k,
+                ret_typ = 'mask'), dtype='uint8'))
 
 # CONVOLUTIONS
 
