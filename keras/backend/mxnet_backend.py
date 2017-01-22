@@ -146,6 +146,12 @@ class KerasTensor(object):
         else:
             return KerasTensor(self.tensor.__add__(other))
 
+    def __iadd__(self, other):
+        return self.__add__(other)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
     def __sub__(self, other):
         if isinstance(other, Number):
             return KerasTensor(self.tensor - other)
@@ -231,6 +237,10 @@ class KerasSymbol(object):
     def dtype(self):
         return self.get_type()
 
+    @property
+    def shape(self):
+        return self.get_shape()
+
     def get_shape(self):
         _, out_shape, _ = self.symbol.infer_shape_partial()
         return out_shape[0]
@@ -283,6 +293,9 @@ class KerasSymbol(object):
                     lhs=self.symbol,
                     rhs=other.symbol))
 
+    def __truediv__(self, other):
+        return self.__div__(other)
+
     def __itruediv__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
@@ -315,6 +328,9 @@ class KerasSymbol(object):
                 mx.sym.broadcast_equal(
                     lhs=self.symbol,
                     rhs=other.symbol))
+
+    def __pow__(self, power, modulo=None):
+        return KerasSymbol(self.symbol.__pow__(power))
 
     def __str__(self):
         return "Symbol:" + self.symbol.name
@@ -1159,16 +1175,17 @@ def mean(x, axis=None, keepdims=False):
     # Returns
         A tensor with the mean of elements of `x`.
     """
-    axis = _normalize_axis(axis, ndim(x))
-    if axis == [] or axis == tuple():
-        # return x
+    if axis == [] :
+        return x
         pass
+    axis = _normalize_axis(axis, ndim(x))
     if isinstance(x, KerasTensor):
         if axis is not None:
             ret = mx.nd.mean(x.tensor, axis=axis)
         else:
             ret = mx.nd.mean(x.tensor)
         return KerasTensor(ret)
+
     if axis is not None:
         ret = mx.sym.mean(data=x.symbol, axis=axis, keepdims=keepdims)
     else:
@@ -1495,8 +1512,6 @@ def reshape(x, shape):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.Reshape(x.tensor, shape=shape))
     return KerasSymbol(mx.sym.Reshape(data=x.symbol, shape=shape))
 
 
@@ -1618,7 +1633,15 @@ def expand_dims(x, dim=-1):
     # Returns
         A tensor with expended dimensions.
     """
-    raise NotImplementedError
+    if dim < 0:
+        dim %= len(x.get_shape())
+    if isinstance(x, KerasSymbol):
+        shape = list(x.get_shape())
+        x = x.symbol
+        return KerasSymbol(mx.sym.expand_dims(x, axis=dim))
+    if isinstance(x, KerasTensor):
+        x = x.tensor
+        return KerasTensor(mx.nd.expand_dims(x, axis=dim))
 
 
 def squeeze(x, axis):
@@ -1627,7 +1650,15 @@ def squeeze(x, axis):
     # Returns
         A tensor with the same data as `x` but reduced dimensions.
     """
-    raise NotImplementedError
+    shape = list(x.get_shape())
+    shape.pop(axis)
+    shape[0] = -1
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+        return KerasSymbol(mx.sym.Reshape(data=x, shape=tuple(shape)))
+    if isinstance(x, KerasTensor):
+        x = x.tensor
+        return KerasTensor(mx.nd.Reshape(x, shape=tuple(shape)))
 
 
 def temporal_padding(x, padding=1):
@@ -1862,6 +1893,7 @@ class Function(object):
         ret_outputs = []
         for x in self.output:
             data = {k.name: v for k, v in zip(self.inputs, inputs)}
+            data = dict(data, **_bind_values)
             data_shapes = {k.name: v.shape for k, v in zip(self.inputs, inputs)}
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null', **data_shapes)
             for v in executor.arg_dict:
@@ -2175,6 +2207,32 @@ def in_top_k(predictions, targets, k):
 
 # CONVOLUTIONS
 
+def _preprocess_conv2d_input(x, dim_ordering):
+    if dim_ordering == 'tf':
+        # TF uses the last dimension as channel dimension,
+        # instead of the 2nd one.
+        # TH input shape: (samples, input_depth, rows, cols)
+        # TF input shape: (samples, rows, cols, input_depth)
+        x = KerasSymbol(mx.sym.transpose(x.symbol, axes=(0, 3, 1, 2)))
+    return x
+
+
+def _preprocess_conv2d_kernel(kernel, dim_ordering):
+    if dim_ordering == 'tf':
+        # TF uses the last dimension as channel dimension,
+        # instead of the 2nd one.
+        # TH kernel shape: (depth, input_depth, rows, cols)
+        # TF kernel shape: (rows, cols, input_depth, depth)
+        kernel = KerasSymbol(mx.sym.transpose(kernel.symbol, axes=(3, 2, 0, 1)))
+    return kernel
+
+
+def _postprocess_conv2d_output(x, dim_ordering):
+    if dim_ordering == 'tf':
+        x = KerasSymbol(mx.sym.transpose(x.symbol, axes=(0, 2, 3, 1)))
+    return x
+
+
 def conv1d(x, kernel, stride=1, border_mode='valid',
            image_shape=None, filter_shape=None):
     """1D convolution.
@@ -2206,10 +2264,14 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     # Returns
         A tensor, result of 2D convolution.
     """
-    layout_kernel, nb_filter = _layout_kernel2(dim_ordering, kernel.shape)
+
+    x = _preprocess_conv2d_input(x, dim_ordering)
+    kernel = _preprocess_conv2d_kernel(kernel, dim_ordering)
+    layout_kernel, nb_filter = _layout_kernel2("th", kernel.shape)
     s = mx.sym.Convolution(data=x.symbol, name=kernel.name, kernel=layout_kernel, stride=strides,
                            num_filter=nb_filter, weight=kernel.symbol, no_bias=True)
-    return KerasSymbol(s)
+    out = _postprocess_conv2d_output(KerasSymbol(s), dim_ordering)
+    return out
 
 
 def deconv2d(x, kernel, output_shape, strides=(1, 1),

@@ -1857,7 +1857,7 @@ if K.backend() == 'mxnet':
                 return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
 
             self.test_function = test_function
-            self.predict_function = test_function
+
 
         def _sync_weights(self):
             if self._weights_dirty:
@@ -1882,7 +1882,20 @@ if K.backend() == 'mxnet':
             pass
 
         def _make_predict_function(self):
-            pass
+            if not hasattr(self, 'predict_function'):
+                self.predict_function = None
+            if self.predict_function is None:
+                if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
+                    inputs = self.inputs + [K.learning_phase()]
+                else:
+                    inputs = self.inputs
+                # returns network outputs. Does not update weights.
+                # Does update the network states.
+                kwargs = getattr(self, '_function_kwargs', {})
+                self.predict_function = K.function(inputs,
+                                                   self.outputs,
+                                                   updates=self.state_updates,
+                                                   **kwargs)
 
 
     Model = MXModel
