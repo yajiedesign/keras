@@ -1812,8 +1812,10 @@ if K.backend() == 'mxnet':
             self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
             self._train_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
                                               label_names=self._label_names, context=self._context)
-            self._pred_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
-                                             label_names=None, context=self._context)
+            metrics_symbols = [x.symbol for x in self.metrics_tensors]
+            self._output_symbol = K.mx.sym.Group([self.total_loss.symbol] + metrics_symbols)
+            self._test_mod = K.mx.mod.Module(symbol=self._output_symbol, data_names=self._data_names,
+                                             label_names=self._label_names, context=self._context)
             self._weights_dirty = False
             self.batch_size = None
 
@@ -1854,29 +1856,28 @@ if K.backend() == 'mxnet':
                         for s, x in zip(self.inputs, inputs[:self._num_data])]
                 label = [K.mx.nd.array(x, dtype=s.dtype) \
                          for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
-                if not self._train_mod.binded:
+                if not self._test_mod.binded:
                     data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                    zip(self.inputs, data)]
                     label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
                                     for s, arr in zip(self.targets + self.sample_weights, label)]
-                    self._train_mod.bind(data_shapes=data_shapes, label_shapes=label_shapes)
-                    self._set_weights(self._train_mod)
-                    self._train_mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
+                    self._test_mod.bind(data_shapes=data_shapes, grad_req='null', label_shapes=label_shapes)
+                    self._set_weights(self._test_mod)
+                    self._test_mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
                     self.batch_size = inputs[0].shape[0]
                 elif inputs[0].shape[0] != self.batch_size:
                     data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                    zip(self.inputs, data)]
                     label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
                                     for s, arr in zip(self.targets + self.sample_weights, label)]
-                    self._train_mod.reshape(data_shapes, label_shapes)
+                    self._test_mod.reshape(data_shapes, label_shapes)
                     self.batch_size = inputs[0].shape[0]
 
                 batch = K.mx.io.DataBatch(data=data, label=label)
-                self._train_mod.forward(batch)
-                return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
+                self._test_mod.forward(batch)
+                return [x.asnumpy().sum() for x in self._test_mod.get_outputs()]
 
             self.test_function = test_function
-
 
         def _sync_weights(self):
             if self._weights_dirty:
