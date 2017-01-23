@@ -685,7 +685,7 @@ def random_normal_variable(shape, mean, scale, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    value = mx.random.normal(loc=mean, scale=std, dtype=dtype, shape=shape)
+    value = mx.random.normal(loc=mean, scale=scale, dtype=dtype, shape=shape)
     name = _autogen_name("normal")
     ret = KerasVariable(name, value.shape, value.dtype)
     ret.bind(value)
