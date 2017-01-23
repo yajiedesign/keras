@@ -403,6 +403,8 @@ def ndim(x):
     ```
     """
     s = shape(x)
+    if s is None:
+        return 0
     return len(s)
 
 
@@ -646,9 +648,10 @@ def random_uniform_variable(shape, low, high, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    if name is None:
-        name = _autogen_name('uniform')
-    ret = KerasSymbol(mx.sym.uniform(low=low, high=high, shape=shape, dtype=dtype, name=name))
+    value = mx.random.uniform(low=low, high=high, dtype=dtype, shape=shape)
+    name = _autogen_name("uniform")
+    ret = KerasVariable(name, value.shape, value.dtype)
+    ret.bind(value)
     return ret
 
 
@@ -682,9 +685,10 @@ def random_normal_variable(shape, mean, scale, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    if name is None:
-        name = _autogen_name('normal')
-    ret = KerasSymbol(mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype=dtype, name=name))
+    value = mx.random.normal(loc=mean, scale=std, dtype=dtype, shape=shape)
+    name = _autogen_name("normal")
+    ret = KerasVariable(name, value.shape, value.dtype)
+    ret.bind(value)
     return ret
 
 
@@ -2009,11 +2013,9 @@ def l2_normalize(x, axis):
         A tensor.
     """
     if axis < 0:
-        axis %= len(x.get_shape())
-    if isinstance(x, KerasSymbol):
-        x = x.symbol
-        norm = mx.sym.sqrt(data=mx.sym.sum(data=mx.sym.square(data=x), axis=axis, keepdims=True))
-        return KerasSymbol(x / norm)
+        axis += ndim(x)
+    norm = mx.sym.sqrt(data=mx.sym.sum(data=mx.sym.square(data=x.symbol), axis=axis, keepdims=True))
+    return KerasSymbol(mx.sym.broadcast_div(x.symbol, norm))
 
 
 def in_top_k(predictions, targets, k):
@@ -2233,7 +2235,14 @@ def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    if dtype is None:
+        dtype = floatx()
+    dtype = _convert_string_dtype(dtype)
+    if name is None:
+        name = _autogen_name('normal')
+    ret = KerasSymbol(mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype=dtype, name=name))
+    return ret
+
 
 
 def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
@@ -2254,8 +2263,10 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    value = mx.random.uniform(low=low, high=high, dtype=dtype, shape=shape)
-    return KerasVariable()
+    if name is None:
+        name = _autogen_name('uniform')
+    ret = KerasSymbol(mx.sym.uniform(low=low, high=high, shape=shape, dtype=dtype, name=name))
+    return ret
 
 
 def random_binomial(shape, p=0.0, dtype=None, seed=None):
