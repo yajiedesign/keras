@@ -121,13 +121,19 @@ class KerasSymbol(object):
         return self.get_shape()
 
     def get_shape(self):
-        _, out_shape, _ = self.symbol.infer_shape_partial()
-        return out_shape[0]
+        if hasattr(self, 'tensor'):
+            return self.tensor.shape
+        else:
+            _, out_shape, _ = self.symbol.infer_shape_partial()
+            return out_shape[0]
 
     def get_type(self):
-        _, out_type, _ = self.symbol.infer_type()
-        t = out_type[0]
-        return _typename(t)
+        if hasattr(self, 'tensor'):
+            return self.tensor.dtype
+        else:
+            _, out_type, _ = self.symbol.infer_type()
+            t = out_type[0]
+            return _typename(t)
 
     def __abs__(self):
         return KerasSymbol(mx.sym.abs(self.symbol))
@@ -140,18 +146,20 @@ class KerasSymbol(object):
                     rhs=other.symbol))
         else:
             return KerasSymbol(
-                mx.sym.broadcast_add(
-                    lhs=self.symbol,
-                    rhs=other))
+                self.symbol + other)
 
     def __radd__(self, other):
         return self.__add__(other)
 
     def __sub__(self, other):
-        return KerasSymbol(
-            mx.sym.broadcast_minus(
-                lhs=self.symbol,
-                rhs=other.symbol))
+        if isinstance(other, KerasSymbol):
+            return KerasSymbol(
+                mx.sym.broadcast_minus(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+        else:
+            return KerasSymbol(
+                self.symbol - other)
 
     def __rsub__(self, other):
         return self.__neg__().__add__(
@@ -185,14 +193,14 @@ class KerasSymbol(object):
                     rhs=other.symbol))
 
     def __mul__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                    self.symbol * other)
-        else:
+        if isinstance(other, KerasSymbol):
             return KerasSymbol(
                 mx.sym.broadcast_mul(
                     lhs=self.symbol,
                     rhs=other.symbol))
+        else:
+            return KerasSymbol(
+                    self.symbol * other)
 
     def __rmul__(self, other):
         return self.__mul__(other)
@@ -264,9 +272,9 @@ def variable(value, dtype=None, name=None):
     if isinstance(value, Number):
         value = np.array([value])
     ndarray = mx.nd.array(value, dtype=dtype)
-    sym = KerasSymbol(mx.sym.Variable(name,shape, dtype=dtype))
-    sym.bind(ndarray)
-    return sym
+    ret = KerasVariable(name, ndarray.shape, ndarray.dtype)
+    ret.bind(ndarray)
+    return ret
 
 
 def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
@@ -491,7 +499,7 @@ def zeros(shape, dtype=None, name=None):
     value = mx.nd.zeros(shape, dtype=dtype)
     if name is None:
         name = _autogen_name('zeroinit')
-    ret = KerasVariable(name, shape, dtype)
+    ret = KerasVariable(name, value.shape, value.dtype)
     ret.bind(value)
     return ret
 
@@ -523,7 +531,7 @@ def ones(shape, dtype=None, name=None):
     value = mx.nd.ones(shape, dtype=dtype)
     if name is None:
         name = _autogen_name('oneinit')
-    ret = KerasVariable(name, shape, dtype)
+    ret = KerasVariable(name, value.shape, value.dtype)
     ret.bind(value)
     return ret
 
@@ -1051,7 +1059,6 @@ def mean(x, axis=None, keepdims=False):
     """
     if axis == [] :
         return x
-        pass
     axis = _normalize_axis(axis, ndim(x))
 
     if axis is not None:
@@ -1101,10 +1108,7 @@ def argmax(x, axis=-1):
         A tensor.
     """
     axis = _normalize_axis(axis, ndim(x))
-    if axis is not None:
-        ret = mx.sym.argmax(data=x.symbol, axis=axis)
-    else:
-        ret = mx.sym.argmax(data=x.symbol)
+    ret = mx.sym.argmax(data=x.symbol, axis=axis)
     return KerasSymbol(ret)
 
 
@@ -1215,7 +1219,7 @@ def clip(x, min_value, max_value):
     min_value = np.float32(min_value)
     max_value = np.nan_to_num(np.float32(max_value))
 
-    return KerasSymbol(mx.mx.clip(data=x.tensor, a_min=min_value, a_max=max_value))
+    return KerasSymbol(mx.sym.clip(data=x.symbol, a_min=min_value, a_max=max_value))
 
 
 def equal(x, y):
@@ -1276,11 +1280,11 @@ def maximum(x, y):
     # Returns
         A tensor.
     """
-    t, k, x, y = _binary_input_check(x, y)
-    if t == mx.nd:
-        return k(t.maximum(x, y))
-    if t == mx.sym:
-        return k(t.maximum(left=x, right=y))
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    if isinstance(y, KerasSymbol):
+        y = y.symbol
+    return KerasSymbol(mx.sym.maximum(left=x, right=y))
 
 
 def minimum(x, y):
@@ -1289,7 +1293,11 @@ def minimum(x, y):
     # Returns
         A tensor.
     """
-    return KerasSymbol(mx.sym.minimum(left=x.symbol, right=y.symbol))
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    if isinstance(y, KerasSymbol):
+        y = y.symbol
+    return KerasSymbol(mx.sym.minimum(left=x, right=y))
 
 
 def sin(x):
@@ -1330,7 +1338,8 @@ def concatenate(tensors, axis=-1):
     # Returns
         A tensor.
     """
-    axis = _normalize_axis(axis, ndim(tensors[0]))
+    if axis < 0:
+        axis += ndim(tensors[0])
     tensors = [t.symbol for t in tensors]
     return KerasSymbol(mx.sym.Concat(*tensors, dim=axis))
 
@@ -1501,7 +1510,7 @@ def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
         A padded 3D tensor.
     """
 
-    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+    return KerasSymbol(mx.sym.Pad(data=x.symbol, mode='constant',
                                   constant_value=0,
                                   pad_width=(0, 0, left_pad, right_pad, 0, 0)))
 
@@ -1525,7 +1534,7 @@ def spatial_2d_padding(x, padding=(1, 1), dim_ordering='default'):
         pattern = (0, 0,
                    padding[0], padding[0], padding[1], padding[1],
                    0, 0)
-    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+    return KerasSymbol(mx.sym.Pad(data=x.symbol, mode='constant',
                                   constant_value=0,
                                   pad_width=pattern))
 
@@ -1555,7 +1564,7 @@ def asymmetric_spatial_2d_padding(x, top_pad=1, bottom_pad=1,
                    top_pad, bottom_pad,
                    left_pad, right_pad,
                    0, 0)
-    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+    return KerasSymbol(mx.sym.Pad(data=x.symbol, mode='constant',
                                   constant_value=0,
                                   pad_width=pattern))
 
@@ -1591,7 +1600,7 @@ def spatial_3d_padding(x, padding=(1, 1, 1), dim_ordering='default'):
             padding[2], padding[2],
             0, 0
         )
-    return KerasSymbol(mx.sym.pad(data=x.symbol, mode='constant',
+    return KerasSymbol(mx.sym.Pad(data=x.symbol, mode='constant',
                                   constant_value=0,
                                   pad_width=pattern))
 
@@ -1957,7 +1966,7 @@ def hard_sigmoid(x):
         A tensor.
     """
     return KerasSymbol(
-            mx.sym.clip(0.2 * x.symbol + 0.5, a_min=0, a_max=1))
+            mx.sym.clip(data = (0.2 * x.symbol + 0.5), a_min=0, a_max=1))
 
 def tanh(x):
     """Element-wise tanh.
@@ -2374,15 +2383,3 @@ def _layout_kernel3(dim_ordering, kernel):
     else:
         raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
     return layout_kernel, nb_filter
-
-
-def _binary_input_check(x, y):
-    if isinstance(x, Number) and isinstance(y, Number):
-        return mx.nd, KerasSymbol, x, y
-    if isinstance(x, KerasSymbol) and isinstance(y, KerasSymbol):
-        return mx.sym, KerasSymbol, x.symbol, y.symbol
-    if isinstance(x, KerasSymbol) and isinstance(y, Number):
-        return mx.sym, KerasSymbol, x.symbol, y
-    if isinstance(x, Number) and isinstance(y, KerasSymbol):
-        return mx.sym, KerasSymbol, x, y.symbol
-    raise Exception("Type Error")
