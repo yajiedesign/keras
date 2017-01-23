@@ -97,137 +97,16 @@ def to_dense(tensor):
     """
     raise NotImplementedError
 
-
-class KerasTensor(object):
-    def __init__(self, ndarray, name=None):
-        if not isinstance(ndarray, mx.ndarray.NDArray):
-            raise TypeError
-        self.tensor = ndarray
-        self._uses_learning_phase = False
-        if name is not None:
-            self._name = name
-        else:
-            self._name = _autogen_name('tensor')
-        _bind_values[self._name] = ndarray
-        self._symbol = mx.sym.Variable(self._name, shape=self.shape, dtype=self.dtype)
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def dtype(self):
-        return _typename(self.tensor.dtype)
-
-    @property
-    def shape(self):
-        return self.get_shape()
-
-    def get_shape(self):
-        return self.tensor.shape
-
-    def get_type(self):
-        return self.dtype
-
-    @property
-    def symbol(self):
-        return self._symbol
-
-    def __abs__(self):
-        return KerasTensor(mx.nd.abs(self.tensor))
-
-    def __add__(self, other):
-        if isinstance(other, Number):
-            return KerasTensor(self.tensor + other)
-        elif isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__add__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__add__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__add__(other))
-
-    def __iadd__(self, other):
-        return self.__add__(other)
-
-    def __radd__(self, other):
-        return self.__add__(other)
-
-    def __sub__(self, other):
-        if isinstance(other, Number):
-            return KerasTensor(self.tensor - other)
-        if isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__sub__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__sub__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__sub__(other))
-
-    def __rsub__(self, other):
-        if isinstance(other, Number):
-            return KerasTensor(self.tensor.__rsub__(other))
-        if isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__rsub__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__rsub__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__rsub__(other))
-
-    def __mul__(self, other):
-        if isinstance(other, Number):
-            return KerasTensor(self.tensor * other)
-        elif isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__mul__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__mul__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__mul__(other))
-
-    def __rmul__(self, other):
-        return self.__mul__(other)
-
-    def __div__(self, other):
-        if isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__div__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__div__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__div__(other))
-
-    def __rdiv__(self, other):
-        if isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__rdiv__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__rdiv__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__rdiv__(other))
-
-    def __truediv__(self, other):
-        if isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__truediv__(other.tensor))
-        elif isinstance(other, KerasSymbol):
-            return KerasSymbol(self.symbol.__truediv__(other.symbol))
-        else:
-            return KerasTensor(self.tensor.__truediv__(other))
-
-    def __rtruediv__(self, other):
-        if isinstance(other, KerasTensor):
-            return KerasTensor(self.tensor.__rtruediv__(other.tensor))
-        else:
-            return KerasTensor(self.tensor.__rtruediv__(other))
-
-    def __neg__(self):
-        return KerasTensor(self.tensor.__neg__())
-
-    def __pos__(self):
-        return KerasTensor(self.tensor.__pos__())
-
-
 class KerasSymbol(object):
     def __init__(self, symbol):
         if not isinstance(symbol, mx.symbol.Symbol):
             raise TypeError
         self.symbol = symbol
         self._uses_learning_phase = False
+
+    def bind(self, data):
+        self.tensor = data
+        _bind_values[self.name] = data
 
     @property
     def name(self):
@@ -254,8 +133,7 @@ class KerasSymbol(object):
         return KerasSymbol(mx.sym.abs(self.symbol))
 
     def __add__(self, other):
-        if isinstance(other, KerasSymbol) or \
-            isinstance(other, KerasTensor):
+        if isinstance(other, KerasSymbol):
             return KerasSymbol(
                 mx.sym.broadcast_add(
                     lhs=self.symbol,
@@ -309,7 +187,7 @@ class KerasSymbol(object):
     def __mul__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                self.symbol * other)
+                    self.symbol * other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_mul(
@@ -386,7 +264,8 @@ def variable(value, dtype=None, name=None):
     if isinstance(value, Number):
         value = np.array([value])
     ndarray = mx.nd.array(value, dtype=dtype)
-    sym = KerasTensor(ndarray, name)
+    sym = KerasSymbol(mx.sym.Variable(name,shape, dtype=dtype))
+    sym.bind(ndarray)
     return sym
 
 
@@ -459,7 +338,7 @@ def shape(x):
     """
     #   if hasattr(x, '_keras_shape'):
     #       return tuple([0 if x is None else x for x in x._keras_shape])
-    if isinstance(x, KerasSymbol) or isinstance(x, KerasTensor):
+    if isinstance(x, KerasSymbol):
         return x.get_shape()
     else:
         return None
@@ -568,17 +447,16 @@ def eval(x):
                [ 3.,  4.]], dtype=float32)
     ```
     """
-    if isinstance(x, KerasTensor):
-        ret = x.tensor.asnumpy()
-        if ret.shape == (1,):
-            return ret[0]
-        return ret
-    elif isinstance(x, KerasSymbol):
-        executor = x.symbol.simple_bind(mx.cpu(), grad_req='null')
-        for v in executor.arg_dict:
-            _bind_values[v].copyto(executor.arg_dict[v])
-        outputs = executor.forward(is_train=_LEARNING_PHASE)
-        ret = outputs[0].asnumpy()
+    if isinstance(x, KerasSymbol):
+        if hasattr(x, 'tensor'):
+            ret = x.tensor.asnumpy()
+        else:
+            executor = x.symbol.simple_bind(mx.cpu(), grad_req='null')
+            for v in executor.arg_dict:
+                _bind_values[v].copyto(executor.arg_dict[v])
+            outputs = executor.forward(is_train=_LEARNING_PHASE)
+            ret = outputs[0].asnumpy()
+
         if ret.shape == (1,):
             return ret[0]
         return ret
@@ -613,7 +491,9 @@ def zeros(shape, dtype=None, name=None):
     value = mx.nd.zeros(shape, dtype=dtype)
     if name is None:
         name = _autogen_name('zeroinit')
-    return KerasTensor(value, name)
+    ret = KerasVariable(name, shape, dtype)
+    ret.bind(value)
+    return ret
 
 
 def ones(shape, dtype=None, name=None):
@@ -643,7 +523,9 @@ def ones(shape, dtype=None, name=None):
     value = mx.nd.ones(shape, dtype=dtype)
     if name is None:
         name = _autogen_name('oneinit')
-    return KerasTensor(value, name)
+    ret = KerasVariable(name, shape, dtype)
+    ret.bind(value)
+    return ret
 
 
 def eye(size, dtype=None, name=None):
@@ -693,7 +575,9 @@ def zeros_like(x, name=None):
     value = mx.nd.zeros(shape(x), dtype=dtype(x))
     if name is None:
         name = _autogen_name('zerolikeinit')
-    return KerasTensor(value, name)
+    ret = KerasVariable(name, shape(x), dtype(x))
+    ret.bind(value)
+    return ret
 
 
 def ones_like(x, name=None):
@@ -719,7 +603,9 @@ def ones_like(x, name=None):
     value = mx.nd.ones(shape(x), dtype(x))
     if name is None:
         name = _autogen_name('zerolikeinit')
-    return KerasTensor(value, name)
+    ret = KerasVariable(name, shape(x), dtype(x))
+    ret.bind(value)
+    return ret
 
 
 def random_uniform_variable(shape, low, high, dtype=None,
@@ -749,14 +635,13 @@ def random_uniform_variable(shape, low, high, dtype=None,
                [ 0.66137183,  0.00869417,  0.89220798]], dtype=float32)
     ```
     """
-    # if seed:
-    #    mx.random.seed(seed)
     if dtype is None:
         dtype = floatx()
-    value = mx.random.uniform(low, high, shape)
+    dtype = _convert_string_dtype(dtype)
     if name is None:
-        name = _autogen_name('randinit')
-    return KerasTensor(value, name)
+        name = _autogen_name('uniform')
+    ret = KerasSymbol(mx.sym.uniform(low=low, high=high, shape=shape, dtype=dtype, name=name))
+    return ret
 
 
 def random_normal_variable(shape, mean, scale, dtype=None,
@@ -789,10 +674,10 @@ def random_normal_variable(shape, mean, scale, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    value = mx.random.normal(mean, scale, shape, dtype=dtype)
     if name is None:
-        name = _autogen_name('randinit')
-    return KerasTensor(value, name)
+        name = _autogen_name('normal')
+    ret = KerasSymbol(mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype=dtype, name=name))
+    return ret
 
 
 def count_params(x):
@@ -846,9 +731,7 @@ def cast(x, dtype):
         >>> input
         <tf.Tensor 'Cast_2:0' shape=(2, 3) dtype=float16>    ```
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.Cast(x.tensor, dtype=dtype))
-    elif isinstance(x, KerasSymbol):
+    if isinstance(x, KerasSymbol):
         return KerasSymbol(
             mx.sym.Cast(data=x.symbol, dtype=dtype))
     else:
@@ -922,8 +805,6 @@ def dot(x, y):
         (2, 4, 5)
     ```
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.dot(x.tensor, y.tensor))
     return KerasSymbol(mx.sym.dot(lhs=x.symbol, rhs=y.symbol))
 
 
@@ -978,8 +859,6 @@ def batch_dot(x, y, axes=None):
         (32, 1, 30)
     ```
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.batch_dot(x.tensor, y.tensor))
     return KerasSymbol(mx.sym.batch_dot(lhs=x.symbol, rhs=y.symbol))
 
 
@@ -1065,8 +944,6 @@ def max(x, axis=None, keepdims=False):
         A tensor with maximum values of `x`.
     """
     axis = _normalize_axis(axis, ndim(x))
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.max(x.tensor, axis=axis, keepdims=keepdims))
     return KerasSymbol(mx.sym.max(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -1085,8 +962,6 @@ def min(x, axis=None, keepdims=False):
         A tensor with miminum values of `x`.
     """
     axis = _normalize_axis(axis, ndim(x))
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.min(x.tensor, axis=axis, keepdims=keepdims))
     return KerasSymbol(mx.sym.min(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -1105,8 +980,6 @@ def sum(x, axis=None, keepdims=False):
         A tensor with sum of `x`.
     """
     axis = _normalize_axis(axis, ndim(x))
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.sum(x.tensor, axis=axis, keepdims=keepdims))
     return KerasSymbol(mx.sym.sum(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -1125,8 +998,6 @@ def prod(x, axis=None, keepdims=False):
         A tensor with the product of elements of `x`.
     """
     axis = _normalize_axis(axis, ndim(x))
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.prod(x.tensor, axis=axis, keepdims=keepdims))
     return KerasSymbol(mx.sym.prod(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
@@ -1182,12 +1053,6 @@ def mean(x, axis=None, keepdims=False):
         return x
         pass
     axis = _normalize_axis(axis, ndim(x))
-    if isinstance(x, KerasTensor):
-        if axis is not None:
-            ret = mx.nd.mean(x.tensor, axis=axis)
-        else:
-            ret = mx.nd.mean(x.tensor)
-        return KerasTensor(ret)
 
     if axis is not None:
         ret = mx.sym.mean(data=x.symbol, axis=axis, keepdims=keepdims)
@@ -1236,12 +1101,6 @@ def argmax(x, axis=-1):
         A tensor.
     """
     axis = _normalize_axis(axis, ndim(x))
-    if isinstance(x, KerasTensor):
-        if axis is not None:
-            ret = mx.nd.argmax(x.tensor, axis=axis)
-        else:
-            ret = mx.nd.argmax(data=x.tensor)
-        return KerasTensor(ret)
     if axis is not None:
         ret = mx.sym.argmax(data=x.symbol, axis=axis)
     else:
@@ -1252,8 +1111,6 @@ def argmax(x, axis=-1):
 def square(x):
     """Element-wise square.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.square(x.tensor))
     return KerasSymbol(mx.sym.square(data=x.symbol))
 
 
@@ -1266,8 +1123,6 @@ def abs(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.abs(x.tensor))
     return KerasSymbol(mx.sym.abs(data=x.symbol))
 
 
@@ -1280,8 +1135,6 @@ def sqrt(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.sqrt(x.tensor))
     return KerasSymbol(mx.sym.sqrt(data=x.symbol))
 
 
@@ -1294,8 +1147,6 @@ def exp(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.exp(x.tensor))
     return KerasSymbol(mx.sym.exp(data=x.symbol))
 
 
@@ -1308,8 +1159,6 @@ def log(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.log(x.tensor))
     return KerasSymbol(mx.sym.log(data=x.symbol))
 
 
@@ -1322,8 +1171,6 @@ def round(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.round(x.tensor))
     return KerasSymbol(mx.sym.round(data=x.symbol))
 
 
@@ -1336,8 +1183,6 @@ def sign(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.sign(x.tensor))
     return KerasSymbol(mx.sym.sign(data=x.symbol))
 
 
@@ -1370,18 +1215,13 @@ def clip(x, min_value, max_value):
     min_value = np.float32(min_value)
     max_value = np.nan_to_num(np.float32(max_value))
 
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.clip(x.tensor, a_min=min_value, a_max=max_value))
-    else:
-        return KerasSymbol(mx.mx.clip(data=x.tensor, a_min=min_value, a_max=max_value))
+    return KerasSymbol(mx.mx.clip(data=x.tensor, a_min=min_value, a_max=max_value))
 
 
 def equal(x, y):
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return KerasTensor(x.tensor.__eq__(y.tensor))
-    if isinstance(x, KerasSymbol) or isinstance(x, KerasTensor):
+    if isinstance(x, KerasSymbol):
         x = x.symbol
-    if isinstance(y, KerasSymbol) or isinstance(y, KerasTensor):
+    if isinstance(y, KerasSymbol):
         y = y.symbol
     return KerasSymbol(
         x.__eq__(y))
@@ -1400,8 +1240,6 @@ def greater(x, y):
     # Returns
         A bool tensor.
     """
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return KerasTensor(x.tensor > y.tensor)
     return KerasSymbol(x.symbol > y.symbol)
 
 
@@ -1411,8 +1249,6 @@ def greater_equal(x, y):
     # Returns
         A bool tensor.
     """
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return KerasTensor(x.tensor >= y.tensor)
     return KerasSymbol(x.symbol >= y.symbol)
 
 
@@ -1422,8 +1258,6 @@ def lesser(x, y):
     # Returns
         A bool tensor.
     """
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return KerasTensor(x.tensor < y.tensor)
     return KerasSymbol(x.symbol < y.symbol)
 
 
@@ -1433,8 +1267,6 @@ def lesser_equal(x, y):
     # Returns
         A bool tensor.
     """
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return KerasTensor(x.tensor <= y.tensor)
     return KerasSymbol(x.symbol <= y.symbol)
 
 
@@ -1457,8 +1289,6 @@ def minimum(x, y):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return KerasTensor(mx.nd.minimum(left=x.tensor, right=y.tensor))
     return KerasSymbol(mx.sym.minimum(left=x.symbol, right=y.symbol))
 
 
@@ -1468,8 +1298,6 @@ def sin(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.sin(x.tensor))
     return KerasSymbol(mx.sym.sin(data=x.symbol))
 
 
@@ -1482,8 +1310,6 @@ def cos(x):
     # Returns
         A tensor.
     """
-    if isinstance(x, KerasTensor):
-        return KerasTensor(mx.nd.cos(x.tensor))
     return KerasSymbol(mx.sym.cos(data=x.symbol))
 
 
@@ -1642,10 +1468,6 @@ def expand_dims(x, dim=-1):
         shape = list(x.get_shape())
         x = x.symbol
         return KerasSymbol(mx.sym.expand_dims(x, axis=dim))
-    if isinstance(x, KerasTensor):
-        x = x.tensor
-        return KerasTensor(mx.nd.expand_dims(x, axis=dim))
-
 
 def squeeze(x, axis):
     """Removes a 1-dimension from the tensor at index "axis".
@@ -1659,9 +1481,6 @@ def squeeze(x, axis):
     if isinstance(x, KerasSymbol):
         x = x.symbol
         return KerasSymbol(mx.sym.Reshape(data=x, shape=tuple(shape)))
-    if isinstance(x, KerasTensor):
-        x = x.tensor
-        return KerasTensor(mx.nd.Reshape(x, shape=tuple(shape)))
 
 
 def temporal_padding(x, padding=1):
@@ -1838,11 +1657,9 @@ def set_value(x, value):
     """Sets the value of a variable,
     from a Numpy array. It returns `None`.
     """
-    if isinstance(x, KerasTensor):
-        x.tensor = mx.nd.array(value)
-    else:
-        x = value
-    return None
+    if isinstance(x, Number):
+        value = [value]
+    x.bind(mx.nd.array(value))
 
 
 def batch_set_value(tuples):
@@ -1855,7 +1672,6 @@ def batch_set_value(tuples):
     """
     for p, w in tuples:
         set_value(p, w)
-    return None
 
 
 def get_variable_shape(x):
@@ -2019,7 +1835,7 @@ def relu(x, alpha=0., max_value=None):
         alpha: slope of negative section.
         max_value: saturation threshold.
     """
-    if isinstance(alpha, KerasTensor):
+    if isinstance(alpha, KerasSymbol):
         alpha = eval(alpha)
     if alpha != 0.:
         ret = mx.sym.LeakyReLU(data=x.symbol,
@@ -2189,10 +2005,6 @@ def l2_normalize(x, axis):
         x = x.symbol
         norm = mx.sym.sqrt(data=mx.sym.sum(data=mx.sym.square(data=x), axis=axis, keepdims=True))
         return KerasSymbol(x / norm)
-    if isinstance(x, KerasTensor):
-        x = x.tensor
-        norm = mx.nd.sqrt(mx.nd.sum(mx.nd.square(x), axis=axis, keepdims=True))
-        return KerasTensor(x / norm)
 
 
 def in_top_k(predictions, targets, k):
@@ -2433,8 +2245,8 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    return KerasVariable(
-        random_uniform_variable(shape, low, high, dtype=dtype, seed=seed).symbol)
+    value = mx.random.uniform(low=low, high=high, dtype=dtype, shape=shape)
+    return KerasVariable()
 
 
 def random_binomial(shape, p=0.0, dtype=None, seed=None):
@@ -2565,22 +2377,12 @@ def _layout_kernel3(dim_ordering, kernel):
 
 
 def _binary_input_check(x, y):
-    if isinstance(x, KerasTensor) and isinstance(y, KerasTensor):
-        return mx.nd, KerasTensor, x.tensor, y.tensor
-    if isinstance(x, KerasTensor) and isinstance(y, Number):
-        return mx.nd, KerasTensor, x.tensor, y
-    if isinstance(x, Number) and isinstance(y, KerasTensor):
-        return mx.nd, KerasTensor, x, y.tensor
     if isinstance(x, Number) and isinstance(y, Number):
-        return mx.nd, KerasTensor, x, y
+        return mx.nd, KerasSymbol, x, y
     if isinstance(x, KerasSymbol) and isinstance(y, KerasSymbol):
         return mx.sym, KerasSymbol, x.symbol, y.symbol
     if isinstance(x, KerasSymbol) and isinstance(y, Number):
         return mx.sym, KerasSymbol, x.symbol, y
-    if isinstance(x, KerasSymbol) and isinstance(y, KerasTensor):
-        return mx.sym, KerasSymbol, x.symbol, y.symbol
     if isinstance(x, Number) and isinstance(y, KerasSymbol):
         return mx.sym, KerasSymbol, x, y.symbol
-    if isinstance(x, KerasTensor) and isinstance(y, KerasSymbol):
-        return mx.sym, KerasSymbol, x.symbol, y.symbol
     raise Exception("Type Error")
