@@ -1913,7 +1913,7 @@ def categorical_crossentropy(output, target, from_logits=False):
     assert not from_logits
     axis = ndim(output) - 1
     output = output.symbol
-    output = output * (output < (1. - _EPSILON)) * (output > _EPSILON)
+    output = mx.sym.clip(output, a_min=_EPSILON, a_max=1. - _EPSILON)
     output = - mx.sym.sum(target.symbol * mx.sym.log(output), axis=axis)
     return KerasSymbol(output)
 
