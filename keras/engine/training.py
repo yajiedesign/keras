@@ -1797,10 +1797,20 @@ if K.backend() == 'mxnet':
     class MXModel(Model):
 
         def compile(self, optimizer, loss, metrics=None, loss_weights=None,
-                    sample_weight_mode=None, context=K.mx.cpu(0), kvstore='device', **kwargs):
+                    sample_weight_mode=None, context='cpu', kvstore='device', **kwargs):
             super(MXModel, self).compile(optimizer, loss, metrics, loss_weights,
                                          sample_weight_mode, **kwargs)
-            self._context = context
+            if isinstance(context, str):
+                context = [context]
+
+            def str2context(s):
+                if s.startswith('cpu'):
+                    return mx.cpu()
+                elif s.startswith('gpu'):
+                    index = int(s[3:])
+                    return mx.gpu(index)
+
+            self._context = [str2context(s) for s in context]
             self._data_names = [x.name for x in self.inputs]
             self._label_names = [x.name for x in self.targets + self.sample_weights]
             self._num_data = len(self._data_names)
@@ -1850,7 +1860,7 @@ if K.backend() == 'mxnet':
                 self._train_mod.forward_backward(batch)
                 self._train_mod.update()
                 self._weights_dirty = True
-                return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
+                return [x.asnumpy().mean() for x in self._train_mod.get_outputs()]
 
             self.train_function = train_function
 
@@ -1859,7 +1869,7 @@ if K.backend() == 'mxnet':
 
                 batch = K.mx.io.DataBatch(data=data, label=label)
                 self._train_mod.forward(batch, is_train=is_train)
-                return [x.asnumpy().sum() for x in self._train_mod.get_outputs()]
+                return [x.asnumpy().mean() for x in self._train_mod.get_outputs()]
 
             self.test_function = test_function
 
