@@ -1083,7 +1083,14 @@ def any(x, axis=None, keepdims=False):
     # Returns
         A uint8 tensor (0s and 1s).
     """
-    raise NotImplementedError
+    axis = _normalize_axis(axis, ndim(x))
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    sum0 = mx.sym.sum_axis(x, axis=axis, keepdims=keepdims)
+    # tmp = KerasSymbol(sum0)
+    # bg = mx.sym.broadcast_greater(lhs=sum0, rhs=0)
+    # bg_tmp = KerasSymbol()
+    return KerasSymbol(sum0 > 0)
 
 
 def all(x, axis=None, keepdims=False):
@@ -1097,7 +1104,12 @@ def all(x, axis=None, keepdims=False):
     # Returns
         A uint8 tensor (0s and 1s).
     """
-    raise NotImplementedError
+    axis = _normalize_axis(axis, ndim(x))
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    abs = mx.sym.abs(data=x)
+    min = mx.sym.min_axis(data=abs, axis=axis, keepdims=keepdims)
+    return KerasSymbol(mx.sym.broadcast_greater(min, 0))
 
 
 def argmax(x, axis=-1):
