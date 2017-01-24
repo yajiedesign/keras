@@ -559,7 +559,12 @@ def eye(size, dtype=None, name=None):
                [ 0.,  0.,  1.]], dtype=float32)
     ```
     """
-    raise NotImplementedError
+    value = mx.nd.array(np.eye(size, dtype=dtype))
+    if name is None:
+        name = _autogen_name('eyeinit')
+    ret = KerasVariable(name, value.shape, value.dtype)
+    ret.bind(value)
+    return ret
 
 
 def zeros_like(x, name=None):
@@ -770,7 +775,7 @@ def update_sub(x, decrement):
 
 # Don't need
 def moving_average_update(variable, value, momentum):
-    raise NotImplementedError
+    return variable, variable * momentum + value * (1. - momentum)
 
 
 # LINEAR ALGEBRA
@@ -1027,7 +1032,19 @@ def var(x, axis=None, keepdims=False):
     # Returns
         A tensor with the variance of elements of `x`.
     """
-    raise NotImplementedError
+    axis = _normalize_axis(axis, ndim(x))
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+
+    v = _var(x, axis, keepdims)
+    return KerasSymbol(v)
+
+
+def _var(x, axis=None, keepdims=False):
+    mean_input = mx.sym.mean(data=x, axis=axis, keepdims=True)
+    centered_input = mx.sym.broadcast_minus(lhs=x, rhs=mean_input)
+    v = mx.sym.mean(data=(centered_input ** 2), axis=axis, keepdims=keepdims)
+    return v
 
 
 def std(x, axis=None, keepdims=False):
@@ -1044,7 +1061,9 @@ def std(x, axis=None, keepdims=False):
     # Returns
         A tensor with the standard deviation of elements of `x`.
     """
-    raise NotImplementedError
+    v = var(x, axis=axis, keepdims=keepdims)
+    ret = mx.sym.sqrt(data=v.symbol)
+    return KerasSymbol(ret)
 
 
 def mean(x, axis=None, keepdims=False):
@@ -1244,7 +1263,7 @@ def equal(x, y):
     if isinstance(y, KerasSymbol):
         y = y.symbol
     return KerasSymbol(
-        x.__eq__(y))
+       mx.sym.broadcast_equal(lhs=x, rhs=y))
 
 
 def not_equal(x, y):
@@ -1344,8 +1363,65 @@ def normalize_batch_in_training(x, gamma, beta,
     # Returns
         A tuple length of 3, `(normalized_tensor, mean, variance)`.
     """
-    raise NotImplementedError
+    original_x = x
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    if isinstance(beta, KerasSymbol):
+        beta = beta.symbol
+    if isinstance(gamma, KerasSymbol):
+        gamma = gamma.symbol
+    # normal, mean, var = mx.sym.BatchNorm(data=x, gamma=gamma.symbol, beta=beta.symbol, output_mean_var=True)
 
+    mean = mx.sym.mean(data=x, axis=reduction_axes, keepdims=False)
+    var = _var(x, axis=reduction_axes, keepdims=False)
+
+    list_axe = list(range(ndim(original_x))[:-1])
+    if sorted(reduction_axes) == list_axe:
+        normed = batch_normalization(x, mean, var,
+                                     beta, gamma,
+                                     epsilon)
+    else:
+        # need broadcasting
+        target_shape = []
+        for axis in range(ndim(original_x)):
+            if axis in reduction_axes:
+                target_shape.append(1)
+            else:
+                target_shape.append(original_x.shape[axis])
+        target_shape = tuple(target_shape)
+
+        broadcast_mean = mx.sym.Reshape(data=mean, shape=target_shape)
+        broadcast_var = mx.sym.Reshape(data=var, shape=target_shape)
+        broadcast_gamma = mx.sym.Reshape(data=gamma, shape=target_shape)
+        broadcast_beta = mx.sym.Reshape(data=beta, shape=target_shape)
+        normed = batch_normalization(x, broadcast_mean, broadcast_var,
+                                     broadcast_beta, broadcast_gamma,
+                                     epsilon)
+
+    return normed, KerasSymbol(mean), KerasSymbol(var)
+
+
+def batch_normalization(x, mean, var, beta, gamma, epsilon=1e-3):
+    """Apply batch normalization on x given mean, var, beta and gamma.
+    """
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    if isinstance(mean, KerasSymbol):
+        mean = mean.symbol
+    if isinstance(var, KerasSymbol):
+        var = var.symbol
+    if isinstance(beta, KerasSymbol):
+        beta = beta.symbol
+    if isinstance(gamma, KerasSymbol):
+        gamma = gamma.symbol
+
+    std = mx.sym.sqrt(data=var + epsilon)
+
+    minus0 = mx.sym.broadcast_minus(x, mean)
+    div0 = mx.sym.broadcast_div(gamma, std)
+    mul0 = mx.sym.broadcast_mul(minus0, div0)
+    rval = mx.sym.broadcast_plus(mul0, beta)
+    return KerasSymbol(rval)
 
 # SHAPE OPERATIONS
 def concatenate(tensors, axis=-1):
@@ -1741,7 +1817,8 @@ class Function(object):
             data_shapes = {k.name: v.shape for k, v in zip(self.inputs, inputs)}
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null', **data_shapes)
             for v in executor.arg_dict:
-                executor.arg_dict[v][:] = data[v]
+                if v in data:
+                    executor.arg_dict[v][:] = data[v]
             outputs = executor.forward(is_train=_LEARNING_PHASE)
             ret_outputs.append(outputs[0].asnumpy())
         return ret_outputs
@@ -1836,8 +1913,12 @@ def in_train_phase(x, alt):
     Note that `alt` should have the *same shape* as `x`.
     """
     if learning_phase() is 1:
+        if isinstance(x, KerasSymbol):
+            return x
         return x()
     if learning_phase() is 0:
+        if isinstance(x, KerasSymbol):
+            return alt
         return alt()
     raise AssertionError("Learning phase must be 0 or 1")
 
@@ -1952,7 +2033,7 @@ def binary_crossentropy(output, target, from_logits=False):
     """
     assert not from_logits
     output = output.symbol
-    output = output * (output < (1. - _EPSILON)) * (output > _EPSILON)
+    output = mx.sym.clip(output, a_min=_EPSILON, a_max=1. - _EPSILON)
     output = -(target.symbol * mx.sym.log(output) + (1.0 - target.symbol) * mx.sym.log(1.0 - output))
     return KerasSymbol(output)
 
