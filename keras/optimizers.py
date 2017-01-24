@@ -647,12 +647,12 @@ if K.backend() == 'mxnet':
             K.mx.optimizer.SGD.__init__(self, learning_rate=lr, momentum=momentum, clip_gradient=clipnorm, **kwargs)
 
     class Adagrad(Optimizer, K.mx.optimizer.AdaGrad):
-        def __init__(self, lr=0.01, epsilon=1e-8, decay=0., clipnorm=None,**kwargs):
+        def __init__(self, lr=0.01, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
             Optimizer.__init__(self)
             K.mx.optimizer.AdaGrad.__init__(self, learning_rate=lr, eps=epsilon, clip_gradient=clipnorm, **kwargs)
 
     class Adadelta(Optimizer, K.mx.optimizer.AdaDelta):
-        def __init__(self,  rho=0.90, epsilon=1e-5, decay=0., clipnorm=None, **kwargs):
+        def __init__(self, rho=0.90, epsilon=1e-5, decay=0., clipnorm=None, **kwargs):
             Optimizer.__init__(self)
             K.mx.optimizer.AdaDelta.__init__(self, rho=rho, epsilon=epsilon, clip_gradient=clipnorm, **kwargs)
 
@@ -665,7 +665,7 @@ if K.backend() == 'mxnet':
     class RMSprop(Optimizer, K.mx.optimizer.RMSProp):
         def __init__(self, lr=0.001, rho=0.9, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
             Optimizer.__init__(self)
-            #TODO: Map all parameters
+            # TODO: Map all parameters
             K.mx.optimizer.RMSProp.__init__(self, learning_rate=lr, gamma2=rho, clip_gradient=clipnorm, **kwargs)
 # Aliases.
 
