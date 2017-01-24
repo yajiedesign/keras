@@ -55,7 +55,7 @@ if not os.path.exists(_config_path):
 
 if 'KERAS_BACKEND' in os.environ:
     _backend = os.environ['KERAS_BACKEND']
-    assert _backend in {'theano', 'tensorflow'}
+    assert _backend in {'theano', 'tensorflow', 'mxnet'}
     _BACKEND = _backend
 
 # import backend

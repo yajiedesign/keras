@@ -1796,9 +1796,9 @@ if K.backend() == 'mxnet':
             self._label_names = [x.name for x in self.targets + self.sample_weights]
             self._num_data = len(self._data_names)
             self._num_label = len(self._label_names)
-            self._symbol = K.mx.sym.Group([K.make_loss(self.total_loss.symbol)] + \
+            self._symbol = K.mx.sym.Group([K.make_loss(self.total_loss.symbol)] +
                             [K.mx.sym.BlockGrad(data=x.symbol) for x in self.metrics_tensors])
-            self._param_names = [n for n in self._symbol.list_arguments() \
+            self._param_names = [n for n in self._symbol.list_arguments()
                                  if n not in self._data_names + self._label_names]
             self._train_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
                                 label_names=self._label_names, context=self._context)
@@ -1809,18 +1809,18 @@ if K.backend() == 'mxnet':
 
             def adjust_module(inputs):
                 is_train = None
-                if self._num_data + self._num_label == len(inputs) -1:
+                if self._num_data + self._num_label == len(inputs) - 1:
                     is_train = inputs[-1] != 0.
                     inputs=inputs[:-1]
                 assert self._num_data + self._num_label == len(inputs)
-                data = [K.mx.nd.array(x, dtype=s.dtype) \
+                data = [K.mx.nd.array(x, dtype=s.dtype)
                         for s, x in zip(self.inputs, inputs[:self._num_data])]
-                label = [K.mx.nd.array(x, dtype=s.dtype) \
+                label = [K.mx.nd.array(x, dtype=s.dtype)
                          for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
                 if not self._train_mod.binded:
                     data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                    zip(self.inputs, data)]
-                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
+                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
                                     for s, arr in zip(self.targets + self.sample_weights, label)]
                     self._train_mod.bind(data_shapes=data_shapes, label_shapes=label_shapes)
                     self._set_weights(self._train_mod)
@@ -1829,7 +1829,7 @@ if K.backend() == 'mxnet':
                 elif inputs[0].shape[0] != self.batch_size:
                     data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                    zip(self.inputs, data)]
-                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) \
+                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
                                     for s, arr in zip(self.targets + self.sample_weights, label)]
                     self._train_mod.reshape(data_shapes, label_shapes)
                     self.batch_size = inputs[0].shape[0]
@@ -1892,6 +1892,4 @@ if K.backend() == 'mxnet':
                                                    updates=self.state_updates,
                                                    **kwargs)
 
-
     Model = MXModel
-
