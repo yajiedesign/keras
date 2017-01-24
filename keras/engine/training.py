@@ -1865,9 +1865,9 @@ if K.backend() == 'mxnet':
                 self._weights_dirty = False
 
         def _set_weights(self, mod):
-            args = {name: self._weights[name].tensor for name in self._param_names}
-            auxs = {name: self._weights[name].tensor for name in self._aux_names}
-            mod.set_params(args, auxs)
+            args = {name: self._weights[name].tensor for name in self._param_names if name in self._weights }
+            auxs = {name: self._weights[name].tensor for name in self._aux_names if name in self._weights}
+            mod.set_params(args, auxs, allow_missing=True)
             self._weights_dirty = False
 
         def _make_test_function(self):
