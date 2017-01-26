@@ -1875,7 +1875,7 @@ def set_value(x, value):
     """Sets the value of a variable,
     from a Numpy array. It returns `None`.
     """
-    if isinstance(x, Number):
+    if isinstance(value, Number):
         value = [value]
     x.bind(mx.nd.array(value))
 
