@@ -1778,20 +1778,26 @@ if K.backend() == 'mxnet':
     class Model(Model):
 
         def compile(self, optimizer, loss, metrics=None, loss_weights=None,
-                    sample_weight_mode=None, context='cpu', kvstore='device', **kwargs):
+                    sample_weight_mode=None, context=None, kvstore='device', **kwargs):
             super(Model, self).compile(optimizer, loss, metrics, loss_weights,
                                          sample_weight_mode, **kwargs)
-            if isinstance(context, str):
-                context = [context]
 
             def str2context(s):
                 if s.startswith('cpu'):
                     return mx.cpu()
+                elif s.startswith('gpu('):
+                    index = int(s[4:-1])
+                    return mx.gpu(index)
                 elif s.startswith('gpu'):
                     index = int(s[3:])
                     return mx.gpu(index)
 
-            self._context = [str2context(s) for s in context]
+            if context is None:
+                self._context = [mx.current_context()]
+            else:
+                if isinstance(context, str):
+                    self_context = [context]
+                self._context = [str2context(s) for s in context]
             self._data_names = [x.name for x in self.inputs]
             self._label_names = [x.name for x in self.targets + self.sample_weights]
             self._num_data = len(self._data_names)
