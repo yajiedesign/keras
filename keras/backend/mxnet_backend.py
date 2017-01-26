@@ -208,10 +208,50 @@ class KerasSymbol(object):
     def __eq__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                self.symbol.__eq__(other))
+                    self.symbol == other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __gt__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol > other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __ge__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol >= other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __lt__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol < other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_lesser(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __le__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol <= other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_lesser_equal(
                     lhs=self.symbol,
                     rhs=other.symbol))
 
@@ -231,7 +271,7 @@ def KerasVariable(name, shape, dtype):
     v = mx.sym.Variable(name, shape=shape, dtype=dtype)
     ret = KerasSymbol(v)
     ret._uses_learning_phase = False
-    ret._keras_shape = shape
+    ret._keras_shape = tuple([d if d !=0 else None for d in shape])
     return ret
 
 
@@ -264,6 +304,8 @@ def variable(value, dtype=None, name=None):
                [ 3.,  4.]])
     ```
     """
+    if hasattr(value, 'tocoo'):
+        raise NotImplementedError
     if name is None:
         name = _autogen_name('variable')
     if dtype is None:
@@ -1146,6 +1188,21 @@ def argmax(x, axis=-1):
     ret = mx.sym.argmax(data=x.symbol, axis=axis)
     return KerasSymbol(ret)
 
+def argmin(x, axis=-1):
+    """Returns the index of the minimum value along an axis.
+
+    # Arguments
+        x: input tensor.
+        axis: axis along which to perform the reduction.
+        keepdims: whether the drop or broadcast the reduction axes.
+
+    # Returns
+        A tensor.
+    """
+    axis = _normalize_axis(axis, ndim(x))
+    ret = mx.sym.argmin(data=x.symbol, axis=axis)
+    return KerasSymbol(ret)
+
 
 def square(x):
     """Element-wise square.
@@ -1791,8 +1848,7 @@ def print_tensor(x, message=''):
     """Print the message and the tensor when evaluated and return the same
     tensor.
     """
-    raise NotImplementedError
-
+    print(message, eval(x))
 
 def group(variables):
     return mx.sym.Group(variables)
@@ -1805,21 +1861,30 @@ def make_loss(variables):
 # GRAPH MANIPULATION
 class Function(object):
     def __init__(self, inputs, output, updates=[], **kwargs):
-        self.inputs = inputs
         self.output = output
         self.updates = updates
+        if isinstance(inputs[-1], Number):
+            self.is_train = inputs[-1]
+            self.inputs = inputs[:-1]
+        else:
+            self.inputs = inputs
+            self.is_train = _LEARNING_PHASE
 
     def __call__(self, inputs):
         ret_outputs = []
+        if isinstance(inputs[-1], Number):
+            self.is_train = inputs[-1]
+            inputs = inputs[:-1]
         for x in self.output:
             data = {k.name: v for k, v in zip(self.inputs, inputs)}
             data = dict(data, **_bind_values)
-            data_shapes = {k.name: v.shape for k, v in zip(self.inputs, inputs)}
+            args = x.symbol.list_arguments()
+            data_shapes = {k.name: v.shape for k, v in zip(self.inputs, inputs) if k.name in args}
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null', **data_shapes)
             for v in executor.arg_dict:
                 if v in data:
                     executor.arg_dict[v][:] = data[v]
-            outputs = executor.forward(is_train=_LEARNING_PHASE)
+            outputs = executor.forward(is_train=self.is_train)
             ret_outputs.append(outputs[0].asnumpy())
         return ret_outputs
 
@@ -1832,15 +1897,14 @@ def gradients(loss, variables):
     """Returns the gradients of `variables` (list of tensor variables)
     with regard to `loss`.
     """
-    # TODO
-    return loss
-
+    raise NotImplementedError
 
 def stop_gradient(variables):
     """Returns `variables` but with zero gradient with respect to every other
     variables.
     """
-    return mx.sym.BlockGrad(variables)
+    return KerasSymbol(
+            mx.sym.BlockGrad(variables.symbol))
 
 
 # CONTROL FLOW
@@ -2331,8 +2395,7 @@ def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    if name is None:
-        name = _autogen_name('normal')
+    name = _autogen_name('normal')
     ret = KerasSymbol(mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype=dtype, name=name))
     return ret
 
@@ -2356,8 +2419,7 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    if name is None:
-        name = _autogen_name('uniform')
+    name = _autogen_name('uniform')
     ret = KerasSymbol(mx.sym.uniform(low=low, high=high, shape=shape, dtype=dtype, name=name))
     return ret
 
