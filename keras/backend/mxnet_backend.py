@@ -13,6 +13,7 @@ _bind_values = {}
 
 def clear_session():
     reset_uids()
+    _bind_values.clear()
     _EXECUTOR = None
 
 
@@ -96,6 +97,7 @@ def to_dense(tensor):
     ```
     """
     raise NotImplementedError
+
 
 class KerasSymbol(object):
     def __init__(self, symbol):
@@ -210,8 +212,48 @@ class KerasSymbol(object):
             return KerasSymbol(
                     self.symbol == other)
         else:
-            return KerasSymbol(
+            return KerasSymbolCompare(
                 mx.sym.broadcast_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol), self, other)
+
+    def __gt__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol > other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __ge__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol >= other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __lt__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol < other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_lesser(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    def __le__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                    self.symbol <= other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_lesser_equal(
                     lhs=self.symbol,
                     rhs=other.symbol))
 
@@ -263,6 +305,16 @@ class KerasSymbol(object):
 
     def __hash__(self):
         return hash(self.name)
+
+
+class KerasSymbolCompare(KerasSymbol):
+    def __init__(self, symbol, left, right):
+        super(KerasSymbolCompare, self).__init__(symbol)
+        self._left = left
+        self._right = right
+
+    def __bool__(self):
+        return self._left.name == self._right.name
 
 
 def KerasVariable(name, shape, dtype):
@@ -695,7 +747,8 @@ def random_uniform_variable(shape, low, high, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    value = mx.random.uniform(low=low, high=high, dtype=dtype, shape=shape)
+    value0 = mx.random.uniform(low=low, high=high, dtype='float32', shape=shape)
+    value = mx.nd.Cast(value0, dtype=dtype)
     name = _autogen_name("uniform")
     ret = KerasVariable(name, value.shape, value.dtype)
     ret.bind(value)
@@ -2007,12 +2060,19 @@ def relu(x, alpha=0., max_value=None):
     """
     if isinstance(alpha, KerasSymbol):
         alpha = eval(alpha)
+    if not isinstance(alpha, Number):
+        raise NotImplementedError
     if alpha != 0.:
-        ret = mx.sym.LeakyReLU(data=x.symbol,
-                               slope=alpha)
+        if isinstance(x, KerasSymbol):
+            x = x.symbol
+        f1 = 0.5 * (1 + alpha)
+        f2 = 0.5 * (1 - alpha)
+        ret = f1 * x + f2 * mx.sym.abs(x)
     else:
         ret = mx.sym.Activation(data=x.symbol,
                                 act_type='relu')
+    if max_value is not None:
+        ret = mx.sym.minimum(ret, max_value)
     return KerasSymbol(ret)
 
 
