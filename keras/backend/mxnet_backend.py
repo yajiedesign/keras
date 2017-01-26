@@ -300,6 +300,10 @@ class KerasSymbol(object):
     def __pow__(self, power, modulo=None):
         return KerasSymbol(self.symbol.__pow__(power))
 
+    def __repr__(self):
+        return self.symbol.name + ':[tensor=' + str(hasattr(self, 'tensor')) + \
+            ' dtype=' + self.dtype +']'
+
     def __str__(self):
         return "Symbol:" + self.symbol.name
 
@@ -747,8 +751,9 @@ def random_uniform_variable(shape, low, high, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    value0 = mx.random.uniform(low=low, high=high, dtype='float32', shape=shape)
-    value = mx.nd.Cast(value0, dtype=dtype)
+    value = mx.random.uniform(low=low, high=high, dtype='float32', shape=shape)
+    if dtype != np.float32:
+        value = mx.nd.Cast(value, dtype=dtype)
     name = _autogen_name("uniform")
     ret = KerasVariable(name, value.shape, value.dtype)
     ret.bind(value)
@@ -785,7 +790,9 @@ def random_normal_variable(shape, mean, scale, dtype=None,
     if dtype is None:
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
-    value = mx.random.normal(loc=mean, scale=scale, dtype=dtype, shape=shape)
+    value = mx.random.normal(loc=mean, scale=scale, dtype='float32', shape=shape)
+    if dtype != np.float32:
+        value = mx.nd.Cast(value, dtype=dtype)
     name = _autogen_name("normal")
     ret = KerasVariable(name, value.shape, value.dtype)
     ret.bind(value)
@@ -2139,7 +2146,8 @@ def sparse_categorical_crossentropy(output, target, from_logits=False):
     """Categorical crossentropy between an output tensor
     and a target tensor, where the target is an integer tensor.
     """
-    raise NotImplementedError
+    output = mx.sym.softmax_cross_entropy(output.symbol, target.symbol);
+    return KerasSymbol(output)
 
 
 def binary_crossentropy(output, target, from_logits=False):
@@ -2456,7 +2464,10 @@ def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
     name = _autogen_name('normal')
-    ret = KerasSymbol(mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype=dtype, name=name))
+    sym = mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype='float32', name=name)
+    if dtype != np.float32:
+        sym = mx.sym.Cast(data=sym, dtype=dtype)
+    ret = KerasSymbol(sym)
     return ret
 
 
@@ -2480,7 +2491,10 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
         dtype = floatx()
     dtype = _convert_string_dtype(dtype)
     name = _autogen_name('uniform')
-    ret = KerasSymbol(mx.sym.uniform(low=low, high=high, shape=shape, dtype=dtype, name=name))
+    sym = mx.sym.uniform(low=low, high=high, shape=shape, dtype='float32', name=name)
+    if dtype != np.float32:
+        sym = mx.sym.Cast(data=sym, dtype=dtype)
+    ret = KerasSymbol(sym)
     return ret
 
 
