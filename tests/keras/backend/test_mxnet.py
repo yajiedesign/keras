@@ -10,10 +10,7 @@ from keras.utils.np_utils import convert_kernel
 
 
 def check_dtype(var, dtype):
-    if K._BACKEND == 'theano':
-        assert var.dtype == dtype
-    else:
-        assert var.dtype.name == '%s_ref' % dtype
+    assert var.dtype.name == dtype
 
 
 def check_single_tensor_operation(function_name, input_shape, **kwargs):

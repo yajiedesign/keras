@@ -1794,11 +1794,11 @@ class Model(Container):
 
 
 if K.backend() == 'mxnet':
-    class MXModel(Model):
+    class Model(Model):
 
         def compile(self, optimizer, loss, metrics=None, loss_weights=None,
                     sample_weight_mode=None, context='cpu', kvstore='device', **kwargs):
-            super(MXModel, self).compile(optimizer, loss, metrics, loss_weights,
+            super(Model, self).compile(optimizer, loss, metrics, loss_weights,
                                          sample_weight_mode, **kwargs)
             if isinstance(context, str):
                 context = [context]
@@ -1911,4 +1911,4 @@ if K.backend() == 'mxnet':
                                                    updates=self.state_updates,
                                                    **kwargs)
 
-    Model = MXModel
+    Model = Model
