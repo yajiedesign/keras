@@ -1821,47 +1821,68 @@ if K.backend() == 'mxnet':
             self._label_names = [x.name for x in self.targets + self.sample_weights]
             self._num_data = len(self._data_names)
             self._num_label = len(self._label_names)
-            self._symbol = K.mx.sym.Group([K.make_loss(self.total_loss.symbol)] +
-                            [K.mx.sym.BlockGrad(data=x.symbol) for x in self.metrics_tensors])
-            self._param_names = [n for n in self._symbol.list_arguments()
+            self._train_sym = K.group([K.make_loss(self.total_loss)] +
+                            [K.stop_gradient(x) for x in self.metrics_tensors]).symbol
+            self._pred_sym = K.group(self.outputs).symbol
+            self._param_names = [n for n in self._train_sym.list_arguments()
                                  if n not in self._data_names + self._label_names]
-            self._train_mod = K.mx.mod.Module(symbol=self._symbol, data_names=self._data_names,
+            self._train_mod = K.mx.mod.Module(symbol=self._train_sym, data_names=self._data_names,
                                 label_names=self._label_names, context=self._context)
-            self._aux_names = self._symbol.list_auxiliary_states()
+            self._pred_mod = K.mx.mod.Module(symbol=self._pred_sym, data_names=self._data_names,
+                                label_names=None, context=self._context)
+            self._aux_names = self._train_sym.list_auxiliary_states()
             self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
             self._weights_dirty = False
             self.batch_size = None
+            K.set_model(self)
 
-            def adjust_module(inputs):
+            def adjust_module(mod, inputs, for_training):
                 is_train = None
                 if self._num_data + self._num_label == len(inputs) - 1:
                     is_train = inputs[-1] != 0.
                     inputs=inputs[:-1]
-                assert self._num_data + self._num_label == len(inputs)
+                elif self._num_data == len(inputs) - 1:
+                    is_train = inputs[-1] != 0.
+                    inputs=inputs[:-1]
+
+                assert self._num_data == len(inputs) or self._num_data + self._num_label == len(inputs)
                 data = [K.mx.nd.array(x, dtype=s.dtype)
                         for s, x in zip(self.inputs, inputs[:self._num_data])]
-                label = [K.mx.nd.array(x, dtype=s.dtype)
-                         for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
-                if not self._train_mod.binded:
+                if self._num_data < len(inputs):
+                    label = [K.mx.nd.array(x, dtype=s.dtype)
+                             for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
+                else:
+                    label = None
+
+                if not mod.binded:
                     data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                    zip(self.inputs, data)]
-                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
-                                    for s, arr in zip(self.targets + self.sample_weights, label)]
-                    self._train_mod.bind(data_shapes=data_shapes, label_shapes=label_shapes)
-                    self._set_weights(self._train_mod)
-                    self._train_mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
+                    if label:
+                        label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
+                                        for s, arr in zip(self.targets + self.sample_weights, label)]
+                    else:
+                        label_shapes = None
+
+                    mod.bind(data_shapes=data_shapes, label_shapes=label_shapes, for_training=for_training)
+                    self._set_weights(mod)
+                    mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
                     self.batch_size = inputs[0].shape[0]
                 elif inputs[0].shape[0] != self.batch_size:
                     data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                    zip(self.inputs, data)]
-                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
-                                    for s, arr in zip(self.targets + self.sample_weights, label)]
-                    self._train_mod.reshape(data_shapes, label_shapes)
+                    if label:
+                        label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
+                                        for s, arr in zip(self.targets + self.sample_weights, label)]
+                    else:
+                        label_shapes = None
+
+                    mod.reshape(data_shapes, label_shapes)
                     self.batch_size = inputs[0].shape[0]
+
                 return data, label, is_train
 
             def train_function(inputs):
-                data, label, _ = adjust_module(inputs)
+                data, label, _ = adjust_module(self._train_mod, inputs, True)
                 batch = K.mx.io.DataBatch(data=data, label=label)
                 self._train_mod.forward_backward(batch)
                 self._train_mod.update()
@@ -1871,7 +1892,7 @@ if K.backend() == 'mxnet':
             self.train_function = train_function
 
             def test_function(inputs):
-                data, label, is_train = adjust_module(inputs)
+                data, label, is_train = adjust_module(self._train_mod, inputs, True)
 
                 batch = K.mx.io.DataBatch(data=data, label=label)
                 self._train_mod.forward(batch, is_train=is_train)
@@ -1879,20 +1900,39 @@ if K.backend() == 'mxnet':
 
             self.test_function = test_function
 
+            def predict_function(inputs):
+                if self._weights_dirty:
+                    self._sync_weights()
+                    self._set_weights(self._pred_mod)
+                data, label, is_train = adjust_module(self._pred_mod, inputs, False)
+
+                batch = K.mx.io.DataBatch(data=data, label=label)
+                self._pred_mod.forward(batch, is_train=is_train)
+                return [x.asnumpy() for x in self._pred_mod.get_outputs()]
+
+            self.predict_function = predict_function
+
         def _sync_weights(self):
             if self._weights_dirty:
-                assert self._train_mod is not None
                 args, auxs = self._train_mod.get_params()
-                for name, x in zip(self._param_names, args):
-                    self._weights[name].tensor[:] = x
-                for name, x in zip(self._aux_names, auxs):
-                    self._weights[name].tensor[:] = x
+                for name in self._param_names:
+                    self._weights[name].tensor[:] = args[name]
+                for name in self._aux_names:
+                    self._weights[name].tensor[:] = auxs[name]
                 self._weights_dirty = False
 
-        def _set_weights(self, mod):
-            args = {name: self._weights[name].tensor for name in self._param_names if name in self._weights }
-            auxs = {name: self._weights[name].tensor for name in self._aux_names if name in self._weights}
-            mod.set_params(args, auxs, allow_missing=True)
+        def _set_weights(self, mod=None):
+            if mod is None:
+                if self._train_mod.binded:
+                    self._set_weights(self._train_mod)
+                if self._pred_mod.binded:
+                    self._set_weights(self._pred_mod)
+                return
+
+            if mod.binded:
+                args = {name: self._weights[name].tensor for name in self._param_names if name in self._weights }
+                auxs = {name: self._weights[name].tensor for name in self._aux_names if name in self._weights}
+                mod.set_params(args, auxs, allow_missing=True)
             self._weights_dirty = False
 
         def _make_test_function(self):
@@ -1902,19 +1942,4 @@ if K.backend() == 'mxnet':
             pass
 
         def _make_predict_function(self):
-            if not hasattr(self, 'predict_function'):
-                self.predict_function = None
-            if self.predict_function is None:
-                if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
-                    inputs = self.inputs + [K.learning_phase()]
-                else:
-                    inputs = self.inputs
-                # returns network outputs. Does not update weights.
-                # Does update the network states.
-                kwargs = getattr(self, '_function_kwargs', {})
-                self.predict_function = K.function(inputs,
-                                                   self.outputs,
-                                                   updates=self.state_updates,
-                                                   **kwargs)
-
-    Model = Model
+            pass

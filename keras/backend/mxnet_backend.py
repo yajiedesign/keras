@@ -8,13 +8,18 @@ from numbers import Number
 
 _LEARNING_PHASE = 1
 _EXECUTOR = None
+_MODEL = None
 _bind_values = {}
 
+def set_model(model):
+    global _MODEL
+    _MODEL = model
 
 def clear_session():
     reset_uids()
     _bind_values.clear()
     _EXECUTOR = None
+    _MODEL = None
 
 
 def learning_phase():
@@ -108,7 +113,10 @@ class KerasSymbol(object):
 
     def bind(self, data):
         self.tensor = data
-        _bind_values[self.name] = data
+        if self.name in _bind_values:
+            _bind_values[self.name][:] = data
+        else:
+            _bind_values[self.name] = data
 
     @property
     def name(self):
@@ -557,6 +565,8 @@ def eval(x):
     """
     if isinstance(x, KerasSymbol):
         if hasattr(x, 'tensor'):
+            if x.name in _bind_values and _MODEL is not None:
+                _MODEL._sync_weights()
             ret = x.tensor.asnumpy()
         else:
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null')
@@ -1650,9 +1660,7 @@ def tile(x, n):
     # Returns
         A tiled tensor.
     """
-    if isinstance(n, int):
-        n = [n]
-    return np.tile(x, n)
+    raise NotImplementedError
 
 
 def flatten(x):
@@ -1877,9 +1885,13 @@ def set_value(x, value):
     """Sets the value of a variable,
     from a Numpy array. It returns `None`.
     """
+    if _MODEL is not None:
+        _MODEL._sync_weights()
     if isinstance(value, Number):
         value = [value]
     x.bind(mx.nd.array(value))
+    if _MODEL is not None:
+        _MODEL._set_weights()
 
 
 def batch_set_value(tuples):
@@ -1890,8 +1902,16 @@ def batch_set_value(tuples):
         tuples: a list of tuples `(tensor, value)`.
             `value` should be a Numpy array.
     """
+    if _MODEL is not None:
+        _MODEL._sync_weights()
+
     for p, w in tuples:
-        set_value(p, w)
+        if isinstance(w, Number):
+            w = [w]
+        p.bind(mx.nd.array(w))
+
+    if _MODEL is not None:
+        _MODEL._set_weights()
 
 
 def get_variable_shape(x):
@@ -1913,11 +1933,11 @@ def print_tensor(x, message=''):
     print(message, eval(x))
 
 def group(variables):
-    return mx.sym.Group(variables)
+    return KerasSymbol(mx.sym.Group([i.symbol for i in variables]))
 
 
 def make_loss(variables):
-    return mx.sym.MakeLoss(variables)
+    return KerasSymbol(mx.sym.MakeLoss(variables.symbol))
 
 
 # GRAPH MANIPULATION
@@ -1965,8 +1985,7 @@ def stop_gradient(variables):
     """Returns `variables` but with zero gradient with respect to every other
     variables.
     """
-    return KerasSymbol(
-            mx.sym.BlockGrad(variables.symbol))
+    return KerasSymbol(mx.sym.BlockGrad(variables.symbol))
 
 
 # CONTROL FLOW
