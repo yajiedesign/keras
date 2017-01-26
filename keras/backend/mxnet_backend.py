@@ -1650,7 +1650,9 @@ def tile(x, n):
     # Returns
         A tiled tensor.
     """
-    raise NotImplementedError
+    if isinstance(n, int):
+        n = [n]
+    return np.tile(x, n)
 
 
 def flatten(x):
