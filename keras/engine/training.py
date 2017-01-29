@@ -1798,8 +1798,9 @@ if K.backend() == 'mxnet':
 
         def compile(self, optimizer, loss, metrics=None, loss_weights=None,
                     sample_weight_mode=None, context=None, kvstore='device', **kwargs):
-            super(Model, self).compile(optimizer, loss, metrics, loss_weights,
-                                         sample_weight_mode, **kwargs)
+            super(Model, self).compile(
+                optimizer, loss, metrics, loss_weights,
+                sample_weight_mode, **kwargs)
 
             def str2context(s):
                 if s.startswith('cpu'):
@@ -1821,15 +1822,17 @@ if K.backend() == 'mxnet':
             self._label_names = [x.name for x in self.targets + self.sample_weights]
             self._num_data = len(self._data_names)
             self._num_label = len(self._label_names)
-            self._train_sym = K.group([K.make_loss(self.total_loss)] +
-                            [K.stop_gradient(x) for x in self.metrics_tensors]).symbol
+            self._train_sym = K.group(
+                [K.make_loss(self.total_loss)] + [K.stop_gradient(x) for x in self.metrics_tensors]).symbol
             self._pred_sym = K.group(self.outputs).symbol
             self._param_names = [n for n in self._train_sym.list_arguments()
                                  if n not in self._data_names + self._label_names]
-            self._train_mod = K.mx.mod.Module(symbol=self._train_sym, data_names=self._data_names,
-                                label_names=self._label_names, context=self._context)
-            self._pred_mod = K.mx.mod.Module(symbol=self._pred_sym, data_names=self._data_names,
-                                label_names=None, context=self._context)
+            self._train_mod = K.mx.mod.Module(
+                symbol=self._train_sym, data_names=self._data_names,
+                label_names=self._label_names, context=self._context)
+            self._pred_mod = K.mx.mod.Module(
+                symbol=self._pred_sym, data_names=self._data_names,
+                label_names=None, context=self._context)
             self._aux_names = self._train_sym.list_auxiliary_states()
             self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
             self._weights_dirty = False
@@ -1840,10 +1843,10 @@ if K.backend() == 'mxnet':
                 is_train = None
                 if self._num_data + self._num_label == len(inputs) - 1:
                     is_train = inputs[-1] != 0.
-                    inputs=inputs[:-1]
+                    inputs = inputs[:-1]
                 elif self._num_data == len(inputs) - 1:
                     is_train = inputs[-1] != 0.
-                    inputs=inputs[:-1]
+                    inputs = inputs[:-1]
 
                 assert self._num_data == len(inputs) or self._num_data + self._num_label == len(inputs)
                 data = [K.mx.nd.array(x, dtype=s.dtype)
@@ -1930,7 +1933,7 @@ if K.backend() == 'mxnet':
                 return
 
             if mod.binded:
-                args = {name: self._weights[name].tensor for name in self._param_names if name in self._weights }
+                args = {name: self._weights[name].tensor for name in self._param_names if name in self._weights}
                 auxs = {name: self._weights[name].tensor for name in self._aux_names if name in self._weights}
                 mod.set_params(args, auxs, allow_missing=True)
             self._weights_dirty = False

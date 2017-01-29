@@ -11,9 +11,11 @@ _EXECUTOR = None
 _MODEL = None
 _bind_values = {}
 
+
 def set_model(model):
     global _MODEL
     _MODEL = model
+
 
 def clear_session():
     reset_uids()
@@ -60,6 +62,7 @@ def _typename(t):
 def is_sparse(tensor):
     return False
 
+
 def _convert_string_dtype(dtype):
     if dtype == 'float16':
         return np.float16
@@ -79,6 +82,7 @@ def _convert_string_dtype(dtype):
         return np.uint16
     else:
         raise ValueError('Unsupported dtype:', dtype)
+
 
 def to_dense(tensor):
     """Converts a sparse tensor into a dense tensor
@@ -139,7 +143,7 @@ class KerasSymbol(object):
 
     def get_type(self):
         if hasattr(self, 'tensor'):
-            return self.tensor.dtype
+            return _typename(self.tensor.dtype)
         else:
             _, out_type, _ = self.symbol.infer_type()
             t = out_type[0]
@@ -168,16 +172,13 @@ class KerasSymbol(object):
                     lhs=self.symbol,
                     rhs=other.symbol))
         else:
-            return KerasSymbol(
-                self.symbol - other)
+            return KerasSymbol(self.symbol - other)
 
     def __rsub__(self, other):
-        return self.__neg__().__add__(
-                other)
+        return self.__neg__().__add__(other)
 
     def __neg__(self):
-        return KerasSymbol(
-                self.symbol * (-1.0))
+        return KerasSymbol(self.symbol * (-1.0))
 
     def __div__(self, other):
         if isinstance(other, Number):
@@ -209,16 +210,14 @@ class KerasSymbol(object):
                     lhs=self.symbol,
                     rhs=other.symbol))
         else:
-            return KerasSymbol(
-                    self.symbol * other)
+            return KerasSymbol(self.symbol * other)
 
     def __rmul__(self, other):
         return self.__mul__(other)
 
     def __eq__(self, other):
         if isinstance(other, Number):
-            return KerasSymbol(
-                    self.symbol == other)
+            return KerasSymbol(self.symbol == other)
         else:
             return KerasSymbolCompare(
                 mx.sym.broadcast_equal(
@@ -227,8 +226,7 @@ class KerasSymbol(object):
 
     def __gt__(self, other):
         if isinstance(other, Number):
-            return KerasSymbol(
-                    self.symbol > other)
+            return KerasSymbol(self.symbol > other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_greater(
@@ -237,8 +235,7 @@ class KerasSymbol(object):
 
     def __ge__(self, other):
         if isinstance(other, Number):
-            return KerasSymbol(
-                    self.symbol >= other)
+            return KerasSymbol(self.symbol >= other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_greater_equal(
@@ -248,7 +245,7 @@ class KerasSymbol(object):
     def __lt__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol < other)
+                self.symbol < other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_lesser(
@@ -258,7 +255,7 @@ class KerasSymbol(object):
     def __le__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol <= other)
+                self.symbol <= other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_lesser_equal(
@@ -268,7 +265,7 @@ class KerasSymbol(object):
     def __gt__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol > other)
+                self.symbol > other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_greater(
@@ -278,7 +275,7 @@ class KerasSymbol(object):
     def __ge__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol >= other)
+                self.symbol >= other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_greater_equal(
@@ -288,7 +285,7 @@ class KerasSymbol(object):
     def __lt__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol < other)
+                self.symbol < other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_lesser(
@@ -298,7 +295,7 @@ class KerasSymbol(object):
     def __le__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
-                    self.symbol <= other)
+                self.symbol <= other)
         else:
             return KerasSymbol(
                 mx.sym.broadcast_lesser_equal(
@@ -309,8 +306,8 @@ class KerasSymbol(object):
         return KerasSymbol(self.symbol.__pow__(power))
 
     def __repr__(self):
-        return self.symbol.name + ':[tensor=' + str(hasattr(self, 'tensor')) + \
-            ' dtype=' + self.dtype +']'
+        return self.symbol.name + ':[tensor=' + str(hasattr(self, 'tensor')) +\
+            ' dtype=' + self.dtype + ']'
 
     def __str__(self):
         return "Symbol:" + self.symbol.name
@@ -334,8 +331,6 @@ def KerasVariable(name, shape, dtype):
         dtype = floatx()
     v = mx.sym.Variable(name, shape=shape, dtype=dtype)
     ret = KerasSymbol(v)
-    ret._uses_learning_phase = False
-    ret._keras_shape = tuple([d if d !=0 else None for d in shape])
     return ret
 
 
@@ -380,6 +375,11 @@ def variable(value, dtype=None, name=None):
     ndarray = mx.nd.array(value, dtype=dtype)
     ret = KerasVariable(name, ndarray.shape, ndarray.dtype)
     ret.bind(ndarray)
+    if isinstance(value, np.ndarray):
+        v._keras_shape = tuple([d if d != 0 else None for d in value.shape])
+    elif hasattr(value, 'get_shape'):
+        v._keras_shape = tuple([d if d != 0 else None for d in map(int, value.get_shape())])
+    v._uses_learning_phase = False
     return ret
 
 
@@ -419,6 +419,8 @@ def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
     else:
         shape = tuple([0 if x is None else x for x in shape])
     sym = KerasVariable(name, shape=shape, dtype=dtype)
+    sym._keras_shape = tuple([d if d != 0 else None for d in shape])
+    sym._uses_learning_phase = False
     return sym
 
 
@@ -541,7 +543,7 @@ def dtype(x):
         'float32_ref'
     ```
     """
-    return x.get_type()
+    return x.dtype
 
 
 def eval(x):
@@ -1192,7 +1194,7 @@ def mean(x, axis=None, keepdims=False):
     # Returns
         A tensor with the mean of elements of `x`.
     """
-    if axis == [] :
+    if axis == []:
         return x
     axis = _normalize_axis(axis, ndim(x))
 
@@ -1258,6 +1260,7 @@ def argmax(x, axis=-1):
     ret = mx.sym.argmax(data=x.symbol, axis=axis)
     return KerasSymbol(ret)
 
+
 def argmin(x, axis=-1):
     """Returns the index of the minimum value along an axis.
 
@@ -1301,7 +1304,10 @@ def sqrt(x):
     # Returns
         A tensor.
     """
-    return KerasSymbol(mx.sym.sqrt(data=x.symbol))
+    ret = mx.sym.Activation(data=x.symbol,
+                                act_type='relu')
+    ret = mx.sym.sqrt(data=ret)
+    return KerasSymbol(ret)
 
 
 def exp(x):
@@ -1389,8 +1395,7 @@ def equal(x, y):
         x = x.symbol
     if isinstance(y, KerasSymbol):
         y = y.symbol
-    return KerasSymbol(
-       mx.sym.broadcast_equal(lhs=x, rhs=y))
+    return KerasSymbol(mx.sym.broadcast_equal(lhs=x, rhs=y))
 
 
 def not_equal(x, y):
@@ -1550,6 +1555,7 @@ def batch_normalization(x, mean, var, beta, gamma, epsilon=1e-3):
     rval = mx.sym.broadcast_plus(mul0, beta)
     return KerasSymbol(rval)
 
+
 # SHAPE OPERATIONS
 def concatenate(tensors, axis=-1):
     """Concatenates a list of tensors alongside the specified axis.
@@ -1696,6 +1702,7 @@ def expand_dims(x, dim=-1):
         shape = list(x.get_shape())
         x = x.symbol
         return KerasSymbol(mx.sym.expand_dims(x, axis=dim))
+
 
 def squeeze(x, axis):
     """Removes a 1-dimension from the tensor at index "axis".
@@ -1932,6 +1939,7 @@ def print_tensor(x, message=''):
     """
     print(message, eval(x))
 
+
 def group(variables):
     return KerasSymbol(mx.sym.Group([i.symbol for i in variables]))
 
@@ -1980,6 +1988,7 @@ def gradients(loss, variables):
     with regard to `loss`.
     """
     raise NotImplementedError
+
 
 def stop_gradient(variables):
     """Returns `variables` but with zero gradient with respect to every other
@@ -2152,7 +2161,8 @@ def softsign(x):
         A tensor.
     """
     return KerasSymbol(
-            x.symbol / (1+mx.sym.abs(x.symbol)))
+        x.symbol / (1 + mx.sym.abs(x.symbol)))
+
 
 def categorical_crossentropy(output, target, from_logits=False):
     assert not from_logits
@@ -2167,7 +2177,7 @@ def sparse_categorical_crossentropy(output, target, from_logits=False):
     """Categorical crossentropy between an output tensor
     and a target tensor, where the target is an integer tensor.
     """
-    output = mx.sym.softmax_cross_entropy(output.symbol, target.symbol);
+    output = mx.sym.softmax_cross_entropy(output.symbol, target.symbol)
     return KerasSymbol(output)
 
 
@@ -2216,7 +2226,8 @@ def hard_sigmoid(x):
         A tensor.
     """
     return KerasSymbol(
-            mx.sym.clip(data = (0.2 * x.symbol + 0.5), a_min=0, a_max=1))
+        mx.sym.clip(data=(0.2 * x.symbol + 0.5), a_min=0, a_max=1))
+
 
 def tanh(x):
     """Element-wise tanh.
@@ -2277,13 +2288,12 @@ def in_top_k(predictions, targets, k):
         `targets_i` is within top-k values of `predictions_i`
     """
     return KerasSymbol(
-            mx.sym.Cast(data=
-            mx.sym.topk(data=predictions.symbol,
-                k = k,
-                ret_typ = 'mask'), dtype='uint8'))
+        mx.sym.Cast(
+            data=mx.sym.topk(data=predictions.symbol, k=k, ret_typ='mask'),
+            dtype='uint8'))
+
 
 # CONVOLUTIONS
-
 def _preprocess_conv2d_input(x, dim_ordering):
     if dim_ordering == 'tf':
         # TF uses the last dimension as channel dimension,
@@ -2490,7 +2500,6 @@ def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
         sym = mx.sym.Cast(data=sym, dtype=dtype)
     ret = KerasSymbol(sym)
     return ret
-
 
 
 def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
