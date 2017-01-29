@@ -5,12 +5,15 @@ import scipy.sparse as sparse
 
 from keras import backend as K
 from keras.backend import theano_backend as KTH, floatx, set_floatx, variable
-from keras.backend import tensorflow_backend as KTF
 from keras.utils.np_utils import convert_kernel
+
+KTF = K
 
 
 def check_dtype(var, dtype):
     if K._BACKEND == 'theano':
+        assert var.dtype == dtype
+    elif K._BACKEND == 'mxnet':
         assert var.dtype == dtype
     else:
         assert var.dtype.name == '%s_ref' % dtype

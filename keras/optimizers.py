@@ -661,7 +661,7 @@ if K.backend() == 'mxnet':
         def __init__(self, lr=0.001, rho=0.9, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
             Optimizer.__init__(self)
             # TODO: Map all parameters
-            K.mx.optimizer.RMSProp.__init__(self, learning_rate=lr, gamma2=rho, clip_gradient=clipnorm, **kwargs)
+            K.mx.optimizer.RMSProp.__init__(self, learning_rate=lr, wd=rho, clip_gradient=clipnorm, **kwargs)
 # Aliases.
 
 sgd = SGD
