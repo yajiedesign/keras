@@ -376,10 +376,10 @@ def variable(value, dtype=None, name=None):
     ret = KerasVariable(name, ndarray.shape, ndarray.dtype)
     ret.bind(ndarray)
     if isinstance(value, np.ndarray):
-        v._keras_shape = tuple([d if d != 0 else None for d in value.shape])
+        ret._keras_shape = tuple([d if d != 0 else None for d in value.shape])
     elif hasattr(value, 'get_shape'):
-        v._keras_shape = tuple([d if d != 0 else None for d in map(int, value.get_shape())])
-    v._uses_learning_phase = False
+        ret._keras_shape = tuple([d if d != 0 else None for d in map(int, value.get_shape())])
+    ret._uses_learning_phase = False
     return ret
 
 
@@ -1304,8 +1304,7 @@ def sqrt(x):
     # Returns
         A tensor.
     """
-    ret = mx.sym.Activation(data=x.symbol,
-                                act_type='relu')
+    ret = mx.sym.Activation(data=x.symbol, act_type='relu')
     ret = mx.sym.sqrt(data=ret)
     return KerasSymbol(ret)
 
