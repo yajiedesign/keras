@@ -1837,83 +1837,53 @@ if K.backend() == 'mxnet':
             self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
             self._weights_dirty = False
             self.batch_size = None
+            self._kvstore = kvstore
             K.set_model(self)
 
-            def adjust_module(mod, inputs, for_training):
-                is_train = None
-                if self._num_data + self._num_label == len(inputs) - 1:
-                    is_train = inputs[-1] != 0.
-                    inputs = inputs[:-1]
-                elif self._num_data == len(inputs) - 1:
-                    is_train = inputs[-1] != 0.
-                    inputs = inputs[:-1]
+        def _adjust_module(self, mod, inputs, for_training):
+            is_train = None
+            if self._num_data + self._num_label == len(inputs) - 1:
+                is_train = inputs[-1] != 0.
+                inputs = inputs[:-1]
+            elif self._num_data == len(inputs) - 1:
+                is_train = inputs[-1] != 0.
+                inputs = inputs[:-1]
 
-                assert self._num_data == len(inputs) or self._num_data + self._num_label == len(inputs)
-                data = [K.mx.nd.array(x, dtype=s.dtype)
-                        for s, x in zip(self.inputs, inputs[:self._num_data])]
-                if self._num_data < len(inputs):
-                    label = [K.mx.nd.array(x, dtype=s.dtype)
-                             for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
+            assert self._num_data == len(inputs) or self._num_data + self._num_label == len(inputs)
+            data = [K.mx.nd.array(x, dtype=s.dtype)
+                    for s, x in zip(self.inputs, inputs[:self._num_data])]
+            if self._num_data < len(inputs):
+                label = [K.mx.nd.array(x, dtype=s.dtype)
+                        for s, x in zip(self.targets + self.sample_weights, inputs[self._num_data:])]
+            else:
+                label = None
+
+            if not mod.binded:
+                data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
+                               zip(self.inputs, data)]
+                if label:
+                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
+                                    for s, arr in zip(self.targets + self.sample_weights, label)]
                 else:
-                    label = None
+                    label_shapes = None
 
-                if not mod.binded:
-                    data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
-                                   zip(self.inputs, data)]
-                    if label:
-                        label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
-                                        for s, arr in zip(self.targets + self.sample_weights, label)]
-                    else:
-                        label_shapes = None
+                mod.bind(data_shapes=data_shapes, label_shapes=label_shapes, for_training=for_training)
+                self._set_weights(mod)
+                mod.init_optimizer(kvstore=self._kvstore, optimizer=self.optimizer)
+                self.batch_size = inputs[0].shape[0]
+            elif inputs[0].shape[0] != self.batch_size:
+                data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
+                               zip(self.inputs, data)]
+                if label:
+                    label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
+                                    for s, arr in zip(self.targets + self.sample_weights, label)]
+                else:
+                    label_shapes = None
 
-                    mod.bind(data_shapes=data_shapes, label_shapes=label_shapes, for_training=for_training)
-                    self._set_weights(mod)
-                    mod.init_optimizer(kvstore=kvstore, optimizer=self.optimizer)
-                    self.batch_size = inputs[0].shape[0]
-                elif inputs[0].shape[0] != self.batch_size:
-                    data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
-                                   zip(self.inputs, data)]
-                    if label:
-                        label_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype)
-                                        for s, arr in zip(self.targets + self.sample_weights, label)]
-                    else:
-                        label_shapes = None
+                mod.reshape(data_shapes, label_shapes)
+                self.batch_size = inputs[0].shape[0]
 
-                    mod.reshape(data_shapes, label_shapes)
-                    self.batch_size = inputs[0].shape[0]
-
-                return data, label, is_train
-
-            def train_function(inputs):
-                data, label, _ = adjust_module(self._train_mod, inputs, True)
-                batch = K.mx.io.DataBatch(data=data, label=label)
-                self._train_mod.forward_backward(batch)
-                self._train_mod.update()
-                self._weights_dirty = True
-                return [x.asnumpy().mean() for x in self._train_mod.get_outputs()]
-
-            self.train_function = train_function
-
-            def test_function(inputs):
-                data, label, is_train = adjust_module(self._train_mod, inputs, True)
-
-                batch = K.mx.io.DataBatch(data=data, label=label)
-                self._train_mod.forward(batch, is_train=is_train)
-                return [x.asnumpy().mean() for x in self._train_mod.get_outputs()]
-
-            self.test_function = test_function
-
-            def predict_function(inputs):
-                if self._weights_dirty:
-                    self._sync_weights()
-                    self._set_weights(self._pred_mod)
-                data, label, is_train = adjust_module(self._pred_mod, inputs, False)
-
-                batch = K.mx.io.DataBatch(data=data, label=label)
-                self._pred_mod.forward(batch, is_train=is_train)
-                return [x.asnumpy() for x in self._pred_mod.get_outputs()]
-
-            self.predict_function = predict_function
+            return data, label, is_train
 
         def _sync_weights(self):
             if self._weights_dirty:
@@ -1939,10 +1909,35 @@ if K.backend() == 'mxnet':
             self._weights_dirty = False
 
         def _make_test_function(self):
-            pass
+            def test_function(inputs):
+                data, label, is_train = self._adjust_module(self._train_mod, inputs, True)
+
+                batch = K.mx.io.DataBatch(data=data, label=label)
+                self._train_mod.forward(batch, is_train=is_train)
+                return [x.asnumpy().mean() for x in self._train_mod.get_outputs()]
+
+            self.test_function = test_function
 
         def _make_train_function(self):
-            pass
+            def train_function(inputs):
+                data, label, _ = self._adjust_module(self._train_mod, inputs, True)
+                batch = K.mx.io.DataBatch(data=data, label=label)
+                self._train_mod.forward_backward(batch)
+                self._train_mod.update()
+                self._weights_dirty = True
+                return [x.asnumpy().mean() for x in self._train_mod.get_outputs()]
+
+            self.train_function = train_function
 
         def _make_predict_function(self):
-            pass
+            def predict_function(inputs):
+                if self._weights_dirty:
+                    self._sync_weights()
+                    self._set_weights(self._pred_mod)
+                data, label, is_train = self._adjust_module(self._pred_mod, inputs, False)
+
+                batch = K.mx.io.DataBatch(data=data, label=label)
+                self._pred_mod.forward(batch, is_train=is_train)
+                return [x.asnumpy() for x in self._pred_mod.get_outputs()]
+
+            self.predict_function = predict_function
