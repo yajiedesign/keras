@@ -643,7 +643,7 @@ if K.backend() == 'mxnet':
             self.decay = K.variable(decay)
 
         def _get_lr(self, _):
-            return K.eval(self.lr)/(1. + K.eval(self.decay)*self.num_update)
+            return self.lr.tensor.asscalar()/(1. + self.decay.tensor.asscalar()*self.num_update)
 
 
     class SGD(MXOptimizer, K.mx.optimizer.SGD):

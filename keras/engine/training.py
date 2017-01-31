@@ -1808,16 +1808,19 @@ if K.backend() == 'mxnet':
             self._pred_sym = K.group(self.outputs).symbol
             self._param_names = [n for n in self._train_sym.list_arguments()
                                  if n not in self._data_names + self._label_names]
+            trainable_weights = set([x.name for x in self.trainable_weights])
+            self._fixed_weights = [x for x in self._param_names if x not in trainable_weights]
             self._train_mod = K.mx.mod.Module(
                 symbol=self._train_sym, data_names=self._data_names,
-                label_names=self._label_names, context=self._context)
+                label_names=self._label_names, context=self._context,
+                fixed_param_names=self._fixed_weights)
             self._pred_mod = K.mx.mod.Module(
                 symbol=self._pred_sym, data_names=self._data_names,
-                label_names=None, context=self._context)
+                label_names=None, context=self._context,
+                fixed_param_names=self._fixed_weights)
             self._aux_names = self._train_sym.list_auxiliary_states()
             self._weights = {x.name: x for x in self.trainable_weights + self.non_trainable_weights}
             self._weights_dirty = False
-            self.batch_size = None
             self._kvstore = kvstore
             K.set_model(self)
 
@@ -1850,9 +1853,9 @@ if K.backend() == 'mxnet':
 
                 mod.bind(data_shapes=data_shapes, label_shapes=label_shapes, for_training=for_training)
                 self._set_weights(mod)
-                mod.init_optimizer(kvstore=self._kvstore, optimizer=self.optimizer)
-                self.batch_size = inputs[0].shape[0]
-            elif inputs[0].shape[0] != self.batch_size:
+                if mod is self._train_mod:
+                    mod.init_optimizer(kvstore=self._kvstore, optimizer=self.optimizer)
+            elif inputs[0].shape[0] != mod._exec_group.batch_size:
                 data_shapes = [K.mx.io.DataDesc(s.name, arr.shape, dtype=s.dtype) for s, arr in
                                zip(self.inputs, data)]
                 if label:
@@ -1862,7 +1865,7 @@ if K.backend() == 'mxnet':
                     label_shapes = None
 
                 mod.reshape(data_shapes, label_shapes)
-                self.batch_size = inputs[0].shape[0]
+                assert inputs[0].shape[0] == mod._exec_group.batch_size, "Reshape failed"
 
             return data, label, is_train
 
@@ -1876,6 +1879,8 @@ if K.backend() == 'mxnet':
                 self._weights_dirty = False
 
         def _set_weights(self, mod=None):
+            assert not self._weights_dirty
+
             if mod is None:
                 if self._train_mod.binded:
                     self._set_weights(self._train_mod)
@@ -1887,7 +1892,6 @@ if K.backend() == 'mxnet':
                 args = {name: self._weights[name].tensor for name in self._param_names if name in self._weights}
                 auxs = {name: self._weights[name].tensor for name in self._aux_names if name in self._weights}
                 mod.set_params(args, auxs, allow_missing=True)
-            self._weights_dirty = False
 
         def _make_test_function(self):
             def test_function(inputs):
