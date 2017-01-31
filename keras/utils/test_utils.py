@@ -135,7 +135,7 @@ def keras_test(func):
     @six.wraps(func)
     def wrapper(*args, **kwargs):
         output = func(*args, **kwargs)
-        if K.backend() == 'tensorflow':
+        if K.backend() == 'tensorflow' or K.backend() == 'mxnet':
             K.clear_session()
         return output
     return wrapper
