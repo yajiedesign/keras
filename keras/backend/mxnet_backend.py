@@ -118,6 +118,10 @@ class KerasSymbol(object):
     def bind(self, data):
         self.tensor = data
         if self.name in _bind_values:
+            assert _bind_values[self.name].shape == data.shape, \
+                "Redefinition of variable %s"%self.name
+            assert _bind_values[self.name].dtype == data.dtype, \
+                "Redefinition of variable %s"%self.name
             _bind_values[self.name][:] = data
         else:
             _bind_values[self.name] = data
