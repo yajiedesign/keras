@@ -215,92 +215,92 @@ class KerasSymbol(object):
     def __rmul__(self, other):
         return self.__mul__(other)
 
-    def __eq__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(self.symbol == other)
-        else:
-            return KerasSymbolCompare(
-                mx.sym.broadcast_equal(
-                    lhs=self.symbol,
-                    rhs=other.symbol), self, other)
+    # def __eq__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(self.symbol == other)
+    #     else:
+    #         return KerasSymbolCompare(
+    #             mx.sym.broadcast_equal(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol), self, other)
 
-    def __gt__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(self.symbol > other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_greater(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __gt__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(self.symbol > other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_greater(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __ge__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(self.symbol >= other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_greater_equal(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __ge__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(self.symbol >= other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_greater_equal(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __lt__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                self.symbol < other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_lesser(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __lt__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(
+    #             self.symbol < other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_lesser(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __le__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                self.symbol <= other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_lesser_equal(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __le__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(
+    #             self.symbol <= other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_lesser_equal(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __gt__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                self.symbol > other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_greater(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __gt__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(
+    #             self.symbol > other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_greater(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __ge__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                self.symbol >= other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_greater_equal(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __ge__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(
+    #             self.symbol >= other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_greater_equal(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __lt__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                self.symbol < other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_lesser(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __lt__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(
+    #             self.symbol < other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_lesser(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
-    def __le__(self, other):
-        if isinstance(other, Number):
-            return KerasSymbol(
-                self.symbol <= other)
-        else:
-            return KerasSymbol(
-                mx.sym.broadcast_lesser_equal(
-                    lhs=self.symbol,
-                    rhs=other.symbol))
+    # def __le__(self, other):
+    #     if isinstance(other, Number):
+    #         return KerasSymbol(
+    #             self.symbol <= other)
+    #     else:
+    #         return KerasSymbol(
+    #             mx.sym.broadcast_lesser_equal(
+    #                 lhs=self.symbol,
+    #                 rhs=other.symbol))
 
     def __pow__(self, power, modulo=None):
         return KerasSymbol(self.symbol.__pow__(power))
@@ -990,8 +990,30 @@ def batch_dot(x, y, axes=None):
         (32, 1, 30)
     ```
     """
-    return KerasSymbol(mx.sym.batch_dot(lhs=x.symbol, rhs=y.symbol))
+    if ndim(x) == ndim(y) == 2:
+        assert axes is None or axes == 1 or tuple(axes) == (1, 1)
+        axes = (2, 1)
+        x = expand_dims(x, dim=1)
+        y = expand_dims(y, dim=2)
+        extra = True
+    else:
+        assert ndim(x) == ndim(y) == 3, "Only support 2d or 3d tensors for now"
+        extra = False
 
+    if isinstance(axes, Number):
+        axes = (axes, axes)
+    if axes is None:
+        Ta = Tb = False
+    else:
+        Ta = not bool(axes[0] - 1)
+        Tb = bool(axes[1] - 1)
+
+    ret = KerasSymbol(mx.sym.batch_dot(lhs=x.symbol, rhs=y.symbol,
+                                       transpose_a=Ta, transpose_b=Tb))
+    if extra:
+        ret = squeeze(ret, 2)
+
+    return ret
 
 def transpose(x):
     """Transposes a tensor and returns it.
@@ -1587,7 +1609,7 @@ def permute_dimensions(x, pattern):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    raise KerasSymbol(mx.sym.transpose(x.symbol, axes=pattern))
 
 
 def resize_images(X, height_factor, width_factor, dim_ordering):
@@ -1710,8 +1732,8 @@ def squeeze(x, axis):
         A tensor with the same data as `x` but reduced dimensions.
     """
     shape = list(x.get_shape())
-    shape.pop(axis)
-    shape[0] = -1
+    assert shape.pop(axis) == 1, "Can only squeeze size 1 dimension"
+
     if isinstance(x, KerasSymbol):
         x = x.symbol
         return KerasSymbol(mx.sym.Reshape(data=x, shape=tuple(shape)))

@@ -636,32 +636,44 @@ class TFOptimizer(Optimizer):
         raise NotImplementedError
 
 if K.backend() == 'mxnet':
-    class SGD(Optimizer, K.mx.optimizer.SGD):
-        def __init__(self, lr=0.01, momentum=0., clipnorm=None, clipvalue=None, nesterov=False, **kwargs):
-            Optimizer.__init__(self)
+    class MXOptimizer(Optimizer, K.mx.optimizer.Optimizer):
+        def __init__(self, lr, decay):
+            super(MXOptimizer, self).__init__()
+            self.lr = K.variable(lr)
+            self.decay = K.variable(decay)
+
+        def _get_lr(self, _):
+            return K.eval(self.lr)/(1. + K.eval(self.decay)*self.num_update)
+
+
+    class SGD(MXOptimizer, K.mx.optimizer.SGD):
+        def __init__(self, lr=0.01, momentum=0., decay=0.,
+                     nesterov=False, clipnorm=None, **kwargs):
             K.mx.optimizer.SGD.__init__(self, learning_rate=lr, momentum=momentum, clip_gradient=clipnorm, **kwargs)
+            MXOptimizer.__init__(self, lr, decay)
 
-    class Adagrad(Optimizer, K.mx.optimizer.AdaGrad):
+    class Adagrad(MXOptimizer, K.mx.optimizer.AdaGrad):
         def __init__(self, lr=0.01, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
-            Optimizer.__init__(self)
             K.mx.optimizer.AdaGrad.__init__(self, learning_rate=lr, eps=epsilon, clip_gradient=clipnorm, **kwargs)
+            MXOptimizer.__init__(self, lr, decay)
 
-    class Adadelta(Optimizer, K.mx.optimizer.AdaDelta):
-        def __init__(self, rho=0.90, epsilon=1e-5, decay=0., clipnorm=None, **kwargs):
-            Optimizer.__init__(self)
+    class Adadelta(MXOptimizer, K.mx.optimizer.AdaDelta):
+        def __init__(self, lr=1.0, rho=0.95, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
             K.mx.optimizer.AdaDelta.__init__(self, rho=rho, epsilon=epsilon, clip_gradient=clipnorm, **kwargs)
+            MXOptimizer.__init__(self, lr, decay)
 
-    class Adam(Optimizer, K.mx.optimizer.Adam):
-        def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
-            Optimizer.__init__(self)
+    class Adam(MXOptimizer, K.mx.optimizer.Adam):
+        def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999,
+                     epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
             K.mx.optimizer.Adam.__init__(self, learning_rate=lr, beta1=beta_1, beta2=beta_2,
                                          epsilon=epsilon, clip_gradient=clipnorm, **kwargs)
+            MXOptimizer.__init__(self, lr, decay)
 
-    class RMSprop(Optimizer, K.mx.optimizer.RMSProp):
+    class RMSprop(MXOptimizer, K.mx.optimizer.RMSProp):
         def __init__(self, lr=0.001, rho=0.9, epsilon=1e-8, decay=0., clipnorm=None, **kwargs):
-            Optimizer.__init__(self)
             # TODO: Map all parameters
             K.mx.optimizer.RMSProp.__init__(self, learning_rate=lr, wd=rho, clip_gradient=clipnorm, **kwargs)
+            MXOptimizer.__init__(self, lr, decay)
 # Aliases.
 
 sgd = SGD
