@@ -3,7 +3,7 @@ import mxnet as mx
 from mxnet import nd as T
 import numpy as np
 
-from .common import _FLOATX, floatx, _EPSILON, image_dim_ordering, reset_uids, get_uid
+from .common import _FLOATX, floatx, _EPSILON, reset_uids, get_uid
 from numbers import Number
 
 _LEARNING_PHASE = 1
@@ -115,6 +115,8 @@ def to_dense(tensor):
     """
     raise NotImplementedError
 
+def image_dim_ordering():
+    return 'th'
 
 class KerasSymbol(object):
     def __init__(self, symbol, name=None):
@@ -1804,7 +1806,7 @@ def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
     # Returns
         A padded 3D tensor.
     """
-
+    raise NotImplementedError
     return KerasSymbol(mx.sym.Pad(data=x.symbol, mode='constant',
                                   constant_value=0,
                                   pad_width=(0, 0, left_pad, right_pad, 0, 0)))
@@ -2596,6 +2598,7 @@ def pool3d(x, pool_size, strides=(1, 1, 1), border_mode='valid',
     # Returns
         A tensor, result of 3D pooling.
     """
+    raise NotImplementedError
     s = mx.sym.Pooling(data=x.symbol, kernel=pool_size, pool_type=pool_mode, pooling_convention=border_mode,
                        stride=strides)
     return KerasSymbol(s)
@@ -2619,7 +2622,7 @@ def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
         dtype = floatx()
     dtype = np.dtype(dtype)
     name = _autogen_name('normal')
-    sym = mx.sym.normal(loc=mean, scale=scale, shape=shape, dtype='float32', name=name)
+    sym = mx.sym.normal(loc=mean, scale=std, shape=shape, dtype='float32', name=name)
     if dtype != np.float32:
         sym = mx.sym.Cast(data=sym, dtype=dtype)
     ret = KerasSymbol(sym)

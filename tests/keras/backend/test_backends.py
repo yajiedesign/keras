@@ -4,10 +4,10 @@ import numpy as np
 import scipy.sparse as sparse
 
 from keras import backend as K
-from keras.backend import theano_backend as KTH, floatx, set_floatx, variable
+from keras.backend import tensorflow_backend as KTF, floatx, set_floatx, variable
 from keras.utils.np_utils import convert_kernel
 
-KTF = K
+KTH = K
 
 
 def check_dtype(var, dtype):
