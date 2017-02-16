@@ -1823,8 +1823,13 @@ if K.backend() == 'mxnet':
             self._num_data = len(self._data_names)
             self._num_label = len(self._label_names)
 
-            self._train_sym = K.group(
-                [K.make_loss(self.total_loss)] + [K.stop_gradient(x) for x in self.metrics_tensors]).symbol
+            train_keras_symbol = K.group(
+                [K.make_loss(self.total_loss)] + [K.stop_gradient(x) for x in self.metrics_tensors])
+
+            bind_values = K.dfs_get_bind_values(train_keras_symbol)
+
+
+            self._train_sym =train_keras_symbol.symbol
             self._pred_sym = K.group(self.outputs).symbol
 
             self._arg_names = [n for n in self._train_sym.list_arguments()
@@ -1832,8 +1837,9 @@ if K.backend() == 'mxnet':
             self._aux_names = self._train_sym.list_auxiliary_states()
             trainable_weights = set([x.name for x in self.trainable_weights])
             self._fixed_weights = [x for x in self._arg_names if x not in trainable_weights]
-            self._args = {x: K.mxnet_backend._bind_values[x] for x in self._arg_names}
-            self._auxs = {x: K.mxnet_backend._bind_values[x] for x in self._aux_names}
+
+            self._args = {x: bind_values[x] for x in self._arg_names}
+            self._auxs = {x: bind_values[x] for x in self._aux_names}
             self._weights_dirty = False
             self._kvstore = kvstore
 
