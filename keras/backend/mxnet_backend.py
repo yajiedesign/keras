@@ -5,11 +5,35 @@ import numpy as np
 
 from .common import _FLOATX, floatx, _EPSILON, reset_uids, get_uid
 from numbers import Number
+from functools import wraps
 
 _LEARNING_PHASE = 1
 _EXECUTOR = None
 _MODEL = None
-_bind_values = {}
+
+
+def keras_symbol_child(func):
+    @wraps(func)
+    def func_wrapper(*args, **kwargs):
+        ret = func(*args, **kwargs)
+        rets = []
+        if isinstance(ret, tuple):
+            rets = list(ret)
+        if isinstance(ret, KerasSymbol):
+            rets = [ret]
+        for r in rets:
+            if isinstance(r, KerasSymbol):
+                for arg in args:
+                    if isinstance(arg, KerasSymbol):
+                        r.add_neighbor(arg)
+                    elif isinstance(arg, list):
+                        for t in arg:
+                            r.add_neighbor(t)
+                    else:
+                        pass
+
+        return ret
+    return func_wrapper
 
 
 def set_model(model):
@@ -19,7 +43,6 @@ def set_model(model):
 
 def clear_session():
     reset_uids()
-    _bind_values.clear()
     _EXECUTOR = None
     _MODEL = None
 
@@ -35,6 +58,7 @@ def set_learning_phase(value):
         raise ValueError('Expected learning phase to be '
                          '0 or 1.')
     _LEARNING_PHASE = value
+
 
 def cast_to_floatx(x):
     """Cast a Numpy array to the default Keras float type.
@@ -65,6 +89,7 @@ def cast_to_floatx(x):
         return x
     else:
         return x.tolist()
+
 
 # VARIABLE MANIPULATION
 def _typename(t):
@@ -115,11 +140,19 @@ def to_dense(tensor):
     """
     raise NotImplementedError
 
+
 def image_dim_ordering():
     return 'th'
 
+
+class KerasContext(object):
+    pass
+
+
 class KerasSymbol(object):
-    def __init__(self, symbol, name=None):
+    def __init__(self, symbol, name=None, neighbor=None):
+        if neighbor is None:
+            neighbor = []
         if not isinstance(symbol, mx.symbol.Symbol):
             raise TypeError
         self.symbol = symbol
@@ -128,17 +161,33 @@ class KerasSymbol(object):
             self._name = symbol.name
         else:
             self._name = name
+        self._neighbor = []
+        for n in neighbor:
+            self.add_neighbor(n)
+        self._bind_values = {}
 
     def bind(self, data):
         self.tensor = data
-        if self.name in _bind_values:
-            assert _bind_values[self.name].shape == data.shape, \
-                "Redefinition of variable %s"%self.name
-            assert _bind_values[self.name].dtype == data.dtype, \
-                "Redefinition of variable %s"%self.name
-            _bind_values[self.name][:] = data
+        if self.name in self._bind_values:
+            assert self._bind_values[self.name].shape == data.shape, \
+                "Redefinition of variable %s" % self.name
+            assert self._bind_values[self.name].dtype == data.dtype, \
+                "Redefinition of variable %s" % self.name
+            self._bind_values[self.name][:] = data
         else:
-            _bind_values[self.name] = data
+            self._bind_values[self.name] = data
+
+    def add_neighbor(self, x):
+        if isinstance(x, KerasSymbol):
+            if x not in self._neighbor:
+                self._neighbor.append(x)
+                x.add_neighbor(self)
+
+    def get_neighbor(self):
+        return self._neighbor
+
+    def get_bind_values(self):
+        return self._bind_values
 
     @property
     def name(self):
@@ -173,17 +222,18 @@ class KerasSymbol(object):
         for i in in_slice:
             if isinstance(i, int):
                 begin.append(i)
-                end.append(i+1)
+                end.append(i + 1)
             else:
                 assert isinstance(i, slice)
                 assert i.step is None or i.step == 1
                 begin.append(i.start)
                 end.append(i.stop)
-        return KerasSymbol(mx.sym.slice(self.symbol, begin=tuple(begin), end=tuple(end)))
+        return KerasSymbol(mx.sym.slice(self.symbol, begin=tuple(begin), end=tuple(end)), neighbor=[self])
 
     def __abs__(self):
-        return KerasSymbol(mx.sym.abs(self.symbol))
+        return KerasSymbol(mx.sym.abs(self.symbol), neighbor=[self])
 
+    @keras_symbol_child
     def __add__(self, other):
         if isinstance(other, KerasSymbol):
             return KerasSymbol(
@@ -194,9 +244,11 @@ class KerasSymbol(object):
             return KerasSymbol(
                 self.symbol + other)
 
+    @keras_symbol_child
     def __radd__(self, other):
         return self.__add__(other)
 
+    @keras_symbol_child
     def __sub__(self, other):
         if isinstance(other, KerasSymbol):
             return KerasSymbol(
@@ -206,12 +258,14 @@ class KerasSymbol(object):
         else:
             return KerasSymbol(self.symbol - other)
 
+    @keras_symbol_child
     def __rsub__(self, other):
         return self.__neg__().__add__(other)
 
     def __neg__(self):
-        return KerasSymbol(self.symbol * (-1.0))
+        return KerasSymbol(self.symbol * (-1.0), neighbor=[self])
 
+    @keras_symbol_child
     def __div__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
@@ -222,9 +276,11 @@ class KerasSymbol(object):
                     lhs=self.symbol,
                     rhs=other.symbol))
 
+    @keras_symbol_child
     def __truediv__(self, other):
         return self.__div__(other)
 
+    @keras_symbol_child
     def __itruediv__(self, other):
         if isinstance(other, Number):
             return KerasSymbol(
@@ -235,6 +291,7 @@ class KerasSymbol(object):
                     lhs=self.symbol,
                     rhs=other.symbol))
 
+    @keras_symbol_child
     def __mul__(self, other):
         if isinstance(other, KerasSymbol):
             return KerasSymbol(
@@ -244,6 +301,7 @@ class KerasSymbol(object):
         else:
             return KerasSymbol(self.symbol * other)
 
+    @keras_symbol_child
     def __rmul__(self, other):
         return self.__mul__(other)
 
@@ -256,59 +314,64 @@ class KerasSymbol(object):
     #                 lhs=self.symbol,
     #                 rhs=other.symbol), self, other)
 
+    @keras_symbol_child
     def __gt__(self, other):
-         if isinstance(other, Number):
-             return KerasSymbol(self.symbol > other)
-         else:
-             return KerasSymbol(
-                 mx.sym.broadcast_greater(
-                     lhs=self.symbol,
-                     rhs=other.symbol))
-
-    def __ge__(self, other):
-         if isinstance(other, Number):
-             return KerasSymbol(self.symbol >= other)
-         else:
-             return KerasSymbol(
-                 mx.sym.broadcast_greater_equal(
-                     lhs=self.symbol,
-                     rhs=other.symbol))
-
-    def __lt__(self, other):
-         if isinstance(other, Number):
-             return KerasSymbol(
-                 self.symbol < other)
-         else:
-             return KerasSymbol(
-                 mx.sym.broadcast_lesser(
+        if isinstance(other, Number):
+            return KerasSymbol(self.symbol > other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater(
                     lhs=self.symbol,
-                     rhs=other.symbol))
+                    rhs=other.symbol))
 
+    @keras_symbol_child
+    def __ge__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(self.symbol >= other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    @keras_symbol_child
+    def __lt__(self, other):
+        if isinstance(other, Number):
+            return KerasSymbol(
+                self.symbol < other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_lesser(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
+
+    @keras_symbol_child
     def __le__(self, other):
-         if isinstance(other, Number):
-             return KerasSymbol(
-                 self.symbol <= other)
-         else:
-             return KerasSymbol(
-                 mx.sym.broadcast_lesser_equal(
-                     lhs=self.symbol,
-                     rhs=other.symbol))
+        if isinstance(other, Number):
+            return KerasSymbol(
+                self.symbol <= other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_lesser_equal(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
 
+    @keras_symbol_child
     def __gt__(self, other):
-         if isinstance(other, Number):
-             return KerasSymbol(
-                 self.symbol > other)
-         else:
-             return KerasSymbol(
-                 mx.sym.broadcast_greater(
-                     lhs=self.symbol,
-                     rhs=other.symbol))
+        if isinstance(other, Number):
+            return KerasSymbol(
+                self.symbol > other)
+        else:
+            return KerasSymbol(
+                mx.sym.broadcast_greater(
+                    lhs=self.symbol,
+                    rhs=other.symbol))
 
     def __pow__(self, power, modulo=None):
-        return KerasSymbol(self.symbol.__pow__(power))
+        return KerasSymbol(self.symbol.__pow__(power), neighbor=[self])
 
     def __repr__(self):
-        return self.symbol.name + ':[tensor=' + str(hasattr(self, 'tensor')) +\
+        return self.symbol.name + ':[tensor=' + str(hasattr(self, 'tensor')) + \
             ' dtype=' + self.dtype + ']'
 
     def __str__(self):
@@ -568,14 +631,15 @@ def eval(x):
     ```
     """
     if isinstance(x, KerasSymbol):
+        bind_values = dfs_get_bind_values(x)
         if hasattr(x, 'tensor'):
-            if x.name in _bind_values and _MODEL is not None:
+            if x.name in bind_values and _MODEL is not None:
                 _MODEL._sync_weights()
             ret = x.tensor.asnumpy()
         else:
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null')
             for v in executor.arg_dict:
-                _bind_values[v].copyto(executor.arg_dict[v])
+                bind_values[v].copyto(executor.arg_dict[v])
             outputs = executor.forward(is_train=_LEARNING_PHASE)
             ret = outputs[0].asnumpy()
 
@@ -871,7 +935,6 @@ def cast(x, dtype):
 
 # Don't need
 def update(x, new_x):
-
     raise NotImplementedError
 
 
@@ -1018,6 +1081,7 @@ def batch_dot(x, y, axes=None):
         ret = squeeze(ret, 2)
 
     return ret
+
 
 def transpose(x):
     """Transposes a tensor and returns it.
@@ -1768,7 +1832,7 @@ def expand_dims(x, dim=-1):
         A tensor with expended dimensions.
     """
     if dim < 0:
-        dim %= len(x.get_shape())+1
+        dim %= len(x.get_shape()) + 1
     if isinstance(x, KerasSymbol):
         shape = list(x.get_shape())
         x = x.symbol
@@ -1931,7 +1995,7 @@ def reverse(x, axes):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.symbol.reverse(data=x.symbol, axis=axes))
 
 
 # VALUE MANIPULATION
@@ -2037,8 +2101,9 @@ class Function(object):
             self.is_train = inputs[-1]
             inputs = inputs[:-1]
         for x in self.output:
+            bind_values = dfs_get_bind_values(x)
             data = {k.name: v for k, v in zip(self.inputs, inputs)}
-            data = dict(data, **_bind_values)
+            data = dict(data, **bind_values)
             args = x.symbol.list_arguments()
             data_shapes = {k.name: v.shape for k, v in zip(self.inputs, inputs) if k.name in args}
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null', **data_shapes)
@@ -2133,15 +2198,14 @@ def rnn(step_function, inputs, initial_states,
         if m is not None:
             next_states = []
             for s, ns in zip(states, new_states):
-                bm = mx.sym.Reshape(m.symbol, shape=m.get_shape()+(1,)*(ndim(s)-ndim(m)))
+                bm = mx.sym.Reshape(m.symbol, shape=m.get_shape() + (1,) * (ndim(s) - ndim(m)))
                 bm = mx.sym.broadcast_to(bm, shape=s.get_shape())
-                next_states.append(KerasSymbol((bm==0)*s.symbol + (bm!=0)*ns.symbol))
+                next_states.append(KerasSymbol((bm == 0) * s.symbol + (bm != 0) * ns.symbol))
             new_states = next_states
         states = new_states
         outputs.append(mx.sym.expand_dims(output.symbol, axis=1))
     outputs = mx.sym.Concat(*outputs, dim=1)
     return output, KerasSymbol(outputs), states
-
 
 
 def switch(condition, then_expression, else_expression):
@@ -2780,3 +2844,39 @@ def _layout_kernel3(dim_ordering, kernel):
     else:
         raise ValueError('Unknown dim_ordering ' + str(dim_ordering))
     return layout_kernel, nb_filter
+
+
+def dfs_get_bind_values(node_start):
+    stack_list = []
+    visited = {node_start: node_start}
+    stack_list.append(node_start)
+    while len(stack_list) > 0:
+        cur_node = stack_list[-1]
+        next_nodes = cur_node.get_neighbor()
+        if len(next_nodes) == 0:
+            stack_list.pop()
+        else:
+            if len(set(next_nodes) - set(visited.keys())) == 0:
+                stack_list.pop()
+            else:
+                for i in next_nodes:
+                    if i not in visited:
+                        visited[i] = i
+                        stack_list.append(i)
+                        break
+    bind_values = {}
+    for key in visited:
+        bind_values.update(key.get_bind_values())
+    return bind_values
+
+import types
+items = dict(globals().items())
+for k, v in items.items():
+    if k == "keras_symbol_child":
+        continue
+    if k == "for_all_methods":
+        continue
+    if k == "dfs_get_bind_values":
+        continue
+    if isinstance(v, types.FunctionType):
+        globals()[k] = keras_symbol_child(v)
