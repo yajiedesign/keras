@@ -2251,28 +2251,44 @@ def in_test_phase(x, alt):
     raise AssertionError("Learning phase must be 0 or 1")
 
 
+def _relu_broadcast(x, alpha):
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    f1 = 0.5 * (1 + alpha)
+    f2 = 0.5 * (1 - alpha)
+    f1 = mx.sym.broadcast_mul(lhs=f1, rhs=x)
+    f2 = mx.sym.broadcast_mul(lhs=f2, rhs=mx.sym.abs(x))
+    return mx.sym.broadcast_minus(lhs=f1, rhs=f2)
+
+
+def _relu(x, alpha):
+    if isinstance(x, KerasSymbol):
+        x = x.symbol
+    f1 = 0.5 * (1 + alpha)
+    f2 = 0.5 * (1 - alpha)
+    return f1 * x + f2 * mx.sym.abs(x)
+
+
 def relu(x, alpha=0., max_value=None):
     """Rectified linear unit
-
     # Arguments
         alpha: slope of negative section.
         max_value: saturation threshold.
     """
     if isinstance(alpha, KerasSymbol):
-        alpha = eval(alpha)
-    if not isinstance(alpha, Number):
-        raise NotImplementedError
-    if alpha != 0.:
-        if isinstance(x, KerasSymbol):
-            x = x.symbol
-        f1 = 0.5 * (1 + alpha)
-        f2 = 0.5 * (1 - alpha)
-        ret = f1 * x + f2 * mx.sym.abs(x)
+        ret = _relu_broadcast(x, alpha.symbol)
+    elif isinstance(alpha, np.ndarray):
+        alpha = variable(alpha)
+        ret = _relu_broadcast(x, alpha.symbol)
+    elif alpha != 0.:
+        ret = _relu(x, alpha)
     else:
         ret = mx.sym.Activation(data=x.symbol,
                                 act_type='relu')
     if max_value is not None:
-        ret = mx.sym.minimum(ret, max_value)
+        if isinstance(max_value, KerasSymbol):
+            max_value = max_value.symbol
+        ret = mx.sym.broadcast_minimum(ret, max_value)
     return KerasSymbol(ret)
 
 
