@@ -2499,30 +2499,25 @@ def _postprocess_conv2d_output(x, dim_ordering):
     return x
 
 
-def _calculation_pad_same(input_shape, kernel, strides, dilation):
-    out_size = np.ceil(float(input_shape) / float(strides))
-    pad_along = ((out_size - 1) * strides + kernel - input_shape)
-    return int(pad_along / 2)
-
-
-def _calculation_pad_full(input_shape, kernel_shape, strides, dilation):
-    dil_kernel_shape = (kernel_shape - 1) * dilation + 1
-    pad = dil_kernel_shape - 1
-    return pad
+def _calculation_pad(input_shape, kernel, strides, dilation, border_mode):
+    from keras.utils.np_utils import conv_output_length
+    out_size = conv_output_length(input_shape, kernel, border_mode, strides, dilation)
+    pad_along = dilation * kernel - input_shape - strides - dilation + out_size * strides + 1
+    return int(np.ceil(pad_along / 2.0)), pad_along % 2 != 0, out_size
 
 
 def _preprocess_border_mode(border_mode, input_shape, kernel, strides, dilation):
-    if border_mode == 'same':
-        padding = (_calculation_pad_same(input_shape[2], kernel[0], strides[0], dilation[0]),
-                   _calculation_pad_same(input_shape[3], kernel[1], strides[1], dilation[1]))
-    elif border_mode == 'full':
-        padding = (_calculation_pad_full(input_shape[2], kernel[0], strides[0], dilation[0]),
-                   _calculation_pad_full(input_shape[3], kernel[1], strides[1], dilation[1]))
+    is_slice = (False, False)
+    out_size = (0, 0)
+    if border_mode == 'same' or  border_mode == 'full':
+        padding, is_slice, out_size \
+            = zip(_calculation_pad(input_shape[2], kernel[0], strides[0], dilation[0], border_mode),
+                  _calculation_pad(input_shape[3], kernel[1], strides[1], dilation[1], border_mode))
     elif border_mode == 'valid':
         padding = (0, 0)
     else:
         raise ValueError('Invalid border mode:', border_mode)
-    return padding
+    return padding, np.any(is_slice), out_size
 
 
 def conv1d(x, kernel, stride=1, border_mode='valid',
@@ -2560,9 +2555,13 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     x = _preprocess_conv2d_input(x, dim_ordering)
     kernel = _preprocess_conv2d_kernel(kernel, dim_ordering)
     layout_kernel, nb_filter = _layout_kernel2("th", kernel.shape)
-    padding = _preprocess_border_mode(border_mode, x.shape, layout_kernel, strides, filter_dilation)
+    padding, is_slice, out_size = _preprocess_border_mode(border_mode, x.shape, layout_kernel, strides, filter_dilation)
     s = mx.sym.Convolution(data=x.symbol, name=kernel.name, kernel=layout_kernel, stride=strides, pad=padding,
-                           num_filter=nb_filter, weight=kernel.symbol, no_bias=True)
+                           num_filter=nb_filter, weight=kernel.symbol, dilate=filter_dilation,  no_bias=True)
+    if is_slice:
+        s = mx.sym.slice(s, begin=(0, 0, 0, 0), end=(None, None, out_size[0], out_size[1]))
+        pass
+
     out = _postprocess_conv2d_output(KerasSymbol(s), dim_ordering)
     return out
 
