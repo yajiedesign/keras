@@ -1759,7 +1759,8 @@ def repeat_elements(x, rep, axis):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    x = mx.sym.repeat(x.symbol, repeats=rep, axis=axis)
+    return KerasSymbol(x)
 
 
 def repeat(x, n):
@@ -1870,7 +1871,17 @@ def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
     # Returns
         A padded 3D tensor.
     """
-    raise NotImplementedError
+    if ndim(x) == 3:
+        x_shape = x.shape
+        r1 = mx.sym.Reshape(x.symbol, shape=(x_shape[0], 1, x_shape[1], x_shape[2]))
+        tmp = KerasSymbol(r1)
+        pad = mx.sym.Pad(data=r1, mode='constant',
+                         constant_value=0,
+                         pad_width=(0, 0, 0, 0, left_pad, right_pad, 0, 0, ))
+        tmp2 = KerasSymbol(pad)
+        r2 = mx.sym.Reshape(pad, shape=(x_shape[0], x_shape[1] + left_pad + right_pad, x_shape[2]))
+        tmp3 = KerasSymbol(r2)
+        return KerasSymbol(r2)
     return KerasSymbol(mx.sym.Pad(data=x.symbol, mode='constant',
                                   constant_value=0,
                                   pad_width=(0, 0, left_pad, right_pad, 0, 0)))
