@@ -1290,6 +1290,9 @@ def mean(x, axis=None, keepdims=False):
         return x
     axis = _normalize_axis(axis, ndim(x))
 
+    if dtype(x) == 'uint8':
+        x = cast(x, floatx())
+
     if axis is not None:
         ret = mx.sym.mean(data=x.symbol, axis=axis, keepdims=keepdims)
     else:
