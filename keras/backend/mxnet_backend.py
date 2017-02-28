@@ -10,29 +10,65 @@ from functools import wraps
 _LEARNING_PHASE = 1
 _EXECUTOR = None
 _MODEL = None
+_REENTRY = False
 
 
 def keras_symbol_child(func):
     @wraps(func)
     def func_wrapper(*args, **kwargs):
-        ret = func(*args, **kwargs)
-        rets = []
-        if isinstance(ret, tuple):
-            rets = list(ret)
-        if isinstance(ret, KerasSymbol):
-            rets = [ret]
-        for r in rets:
-            if isinstance(r, KerasSymbol):
-                for arg in args:
-                    if isinstance(arg, KerasSymbol):
-                        r.add_neighbor(arg)
-                    elif isinstance(arg, list):
-                        for t in arg:
-                            r.add_neighbor(t)
-                    else:
-                        pass
+        global _REENTRY
+        reset = False
+        try:
+            if _REENTRY:
+                train_ret = func(*args, **kwargs)
+                test_ret = train_ret
+            else:
+                _REENTRY = True
+                reset = True
+                old = learning_phase()
+                set_learning_phase(1)
+                train_ret = func(*args, **kwargs)
+                set_learning_phase(0)
+                test_ret = func(*args, **kwargs)
+                set_learning_phase(old)
+                assert type(train_ret) == type(test_ret)
 
-        return ret
+            train_rets = []
+            test_rets = []
+            if isinstance(train_ret, tuple):
+                train_rets = list(train_ret)
+                test_rets = list(test_ret)
+            if isinstance(train_ret, KerasSymbol):
+                train_rets = [train_ret]
+                test_rets = [test_ret]
+            assert len(train_rets) == len(test_rets)
+            for train_r, test_r in zip(train_rets, test_rets):
+                assert type(train_r) == type(test_r)
+                if isinstance(train_r, KerasSymbol):
+                    train_r = [train_r]
+                    test_r = [test_r]
+                for train_i, test_i in zip(train_r, test_r):
+                    if isinstance(train_i, KerasSymbol):
+                        for arg in list(args) + list(kwargs.values()) + list(test_i.get_neighbor()):
+                            train_i.add_neighbor(arg)
+                            if isinstance(arg, (list, tuple)):
+                                for t in arg:
+                                    train_i.add_neighbor(t)
+                        if reset:
+                            assert isinstance(train_i._train_sym, mx.sym.Symbol)
+                            assert isinstance(test_i._pred_sym, mx.sym.Symbol)
+                            assert train_i._name == test_i._name
+                            train_i._pred_sym = test_i._pred_sym
+                            assert train_i._train_sym is not None and train_i._pred_sym is not None
+                    else:
+                        assert (train_i == test_i) is True
+
+            if reset:
+                _REENTRY = False
+            return train_ret
+        finally:
+            if reset:
+                _REENTRY = False
     return func_wrapper
 
 
@@ -45,6 +81,7 @@ def clear_session():
     reset_uids()
     _EXECUTOR = None
     _MODEL = None
+    _REENTRY = False
 
 
 def learning_phase():
@@ -117,6 +154,7 @@ def is_sparse(tensor):
     return False
 
 
+@keras_symbol_child
 def to_dense(tensor):
     """Converts a sparse tensor into a dense tensor
     and returns it.
@@ -150,21 +188,20 @@ class KerasContext(object):
 
 
 class KerasSymbol(object):
-    def __init__(self, symbol, name=None, neighbor=None):
+    def __init__(self, symbol, name=None, neighbor=None, is_var=False):
         if neighbor is None:
             neighbor = []
         if not isinstance(symbol, mx.symbol.Symbol):
             raise TypeError
-        self.symbol = symbol
+        self._train_sym = symbol if learning_phase() or is_var else None
+        self._pred_sym = None if learning_phase() and not is_var else symbol
         self._uses_learning_phase = False
-        if name is None:
-            self._name = symbol.name
-        else:
-            self._name = name
+        self._name = name
         self._neighbor = []
         for n in neighbor:
             self.add_neighbor(n)
         self._bind_values = {}
+
 
     def bind(self, data):
         self.tensor = data
@@ -173,7 +210,12 @@ class KerasSymbol(object):
                 "Redefinition of variable %s" % self.name
             assert self._bind_values[self.name].dtype == data.dtype, \
                 "Redefinition of variable %s" % self.name
-            self._bind_values[self.name][:] = data
+            if _MODEL is not None and self.name in _MODEL._args:
+                _MODEL._set_weights({self.name: data}, {})
+            if _MODEL is not None and self.name in _MODEL._auxs:
+                _MODEL._set_weights({}, {self.name: data})
+            else:
+                self._bind_values[self.name][:] = data
         else:
             self._bind_values[self.name] = data
 
@@ -190,8 +232,17 @@ class KerasSymbol(object):
         return self._bind_values
 
     @property
+    def symbol(self):
+        sym = self._train_sym if learning_phase() else self._pred_sym
+        assert sym is not None, "%s, %s"%(self._train_sym, self._pred_sym)
+        return sym
+
+    @property
     def name(self):
-        return self._name
+        if self._name is not None:
+            return self._name
+        else:
+            return self.symbol.name
 
     @property
     def dtype(self):
@@ -216,6 +267,7 @@ class KerasSymbol(object):
             t = out_type[0]
             return _typename(t)
 
+    @keras_symbol_child
     def __getitem__(self, in_slice):
         begin = []
         end = []
@@ -230,6 +282,7 @@ class KerasSymbol(object):
                 end.append(i.stop)
         return KerasSymbol(mx.sym.slice(self.symbol, begin=tuple(begin), end=tuple(end)), neighbor=[self])
 
+    @keras_symbol_child
     def __abs__(self):
         return KerasSymbol(mx.sym.abs(self.symbol), neighbor=[self])
 
@@ -377,9 +430,6 @@ class KerasSymbol(object):
     def __str__(self):
         return "Symbol:" + self.symbol.name
 
-    def __hash__(self):
-        return hash(self.name)
-
 
 class KerasSymbolCompare(KerasSymbol):
     def __init__(self, symbol, left, right):
@@ -395,7 +445,7 @@ def KerasVariable(name, shape, dtype, **kwargs):
     if dtype is None:
         dtype = floatx()
     v = mx.sym.Variable(name, shape=shape, dtype=dtype, **kwargs)
-    ret = KerasSymbol(v)
+    ret = KerasSymbol(v, is_var=True)
     return ret
 
 
@@ -444,7 +494,6 @@ def variable(value, dtype=None, name=None):
         ret._keras_shape = tuple([d if d != 0 else None for d in value.shape])
     elif hasattr(value, 'get_shape'):
         ret._keras_shape = tuple([d if d != 0 else None for d in map(int, value.get_shape())])
-    ret._uses_learning_phase = False
     return ret
 
 
@@ -485,7 +534,6 @@ def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
         shape = tuple([0 if x is None else x for x in shape])
     sym = KerasVariable(name, shape=shape, dtype=dtype)
     sym._keras_shape = tuple([d if d != 0 else None for d in shape])
-    sym._uses_learning_phase = False
     return sym
 
 
@@ -631,12 +679,12 @@ def eval(x):
     ```
     """
     if isinstance(x, KerasSymbol):
-        bind_values = dfs_get_bind_values(x)
         if hasattr(x, 'tensor'):
-            if x.name in bind_values and _MODEL is not None:
+            if x.name in x.get_bind_values() and _MODEL is not None:
                 _MODEL._sync_weights()
             ret = x.tensor.asnumpy()
         else:
+            bind_values = dfs_get_bind_values(x)
             executor = x.symbol.simple_bind(mx.cpu(), grad_req='null')
             for v in executor.arg_dict:
                 bind_values[v].copyto(executor.arg_dict[v])
@@ -766,7 +814,7 @@ def zeros_like(x, name=None):
     if name is None:
         name = _autogen_name('zerolikeinit')
     y = mx._symbol_internal._zeros(dtype=dtype(x))
-    return KerasSymbol(mx._symbol_internal._identity_with_attr_like_rhs(y, x.symbol), name=name)
+    return KerasSymbol(mx._symbol_internal._identity_with_attr_like_rhs(y, x.symbol), name=name, is_var=True)
 
 
 def ones_like(x, name=None):
@@ -792,7 +840,7 @@ def ones_like(x, name=None):
     if name is None:
         name = _autogen_name('zerolikeinit')
     y = mx._symbol_internal._ones(dtype=dtype(x))
-    return KerasSymbol(mx._symbol_internal._identity_with_attr_like_rhs(y, x.symbol), name=name)
+    return KerasSymbol(mx._symbol_internal._identity_with_attr_like_rhs(y, x.symbol), name=name, is_var=True)
 
 
 def random_uniform_variable(shape, low, high, dtype=None,
@@ -896,6 +944,7 @@ def count_params(x):
     return np.prod([shape[i] for i in range(len(shape))])
 
 
+@keras_symbol_child
 def cast(x, dtype):
     """Casts a tensor to a different dtype and returns it.
 
@@ -934,27 +983,32 @@ def cast(x, dtype):
 # UPDATES OPS
 
 # Don't need
+@keras_symbol_child
 def update(x, new_x):
     raise NotImplementedError
 
 
 # Don't need
+@keras_symbol_child
 def update_add(x, increment):
     raise NotImplementedError
 
 
 # Don't need
+@keras_symbol_child
 def update_sub(x, decrement):
     raise NotImplementedError
 
 
 # Don't need
+@keras_symbol_child
 def moving_average_update(variable, value, momentum):
     return variable, variable * momentum + value * (1. - momentum)
 
 
 # LINEAR ALGEBRA
 
+@keras_symbol_child
 def dot(x, y):
     """Multiplies 2 tensors (and/or variables) and returns a *tensor*.
     When attempting to multiply a ND tensor
@@ -1006,6 +1060,7 @@ def dot(x, y):
     return KerasSymbol(mx.sym.dot(lhs=x.symbol, rhs=y))
 
 
+@keras_symbol_child
 def batch_dot(x, y, axes=None):
     """Batchwise dot product.
 
@@ -1083,6 +1138,7 @@ def batch_dot(x, y, axes=None):
     return ret
 
 
+@keras_symbol_child
 def transpose(x):
     """Transposes a tensor and returns it.
 
@@ -1119,6 +1175,7 @@ def transpose(x):
         mx.sym.transpose(data=x.symbol))
 
 
+@keras_symbol_child
 def gather(reference, indices):
     """Retrieves the elements of indices `indices`
     in the tensor `reference`.
@@ -1152,6 +1209,7 @@ def _normalize_axis(axis, ndim):
     return axis
 
 
+@keras_symbol_child
 def max(x, axis=None, keepdims=False):
     """Maximum value in a tensor.
 
@@ -1170,6 +1228,7 @@ def max(x, axis=None, keepdims=False):
     return KerasSymbol(mx.sym.max(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
+@keras_symbol_child
 def min(x, axis=None, keepdims=False):
     """Minimum value in a tensor.
 
@@ -1188,6 +1247,7 @@ def min(x, axis=None, keepdims=False):
     return KerasSymbol(mx.sym.min(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
+@keras_symbol_child
 def sum(x, axis=None, keepdims=False):
     """Sum of the values in a tensor, alongside the specified axis.
 
@@ -1206,6 +1266,7 @@ def sum(x, axis=None, keepdims=False):
     return KerasSymbol(mx.sym.sum(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
+@keras_symbol_child
 def prod(x, axis=None, keepdims=False):
     """Multiplies the values in a tensor, alongside the specified axis.
 
@@ -1224,6 +1285,7 @@ def prod(x, axis=None, keepdims=False):
     return KerasSymbol(mx.sym.prod(data=x.symbol, axis=axis, keepdims=keepdims))
 
 
+@keras_symbol_child
 def var(x, axis=None, keepdims=False):
     """Variance of a tensor, alongside the specified axis.
 
@@ -1253,6 +1315,7 @@ def _var(x, axis=None, keepdims=False):
     return v
 
 
+@keras_symbol_child
 def std(x, axis=None, keepdims=False):
     """Standard deviation of a tensor, alongside the specified axis.
 
@@ -1272,6 +1335,7 @@ def std(x, axis=None, keepdims=False):
     return KerasSymbol(ret)
 
 
+@keras_symbol_child
 def mean(x, axis=None, keepdims=False):
     """Mean of a tensor, alongside the specified axis.
 
@@ -1300,6 +1364,7 @@ def mean(x, axis=None, keepdims=False):
     return KerasSymbol(ret)
 
 
+@keras_symbol_child
 def any(x, axis=None, keepdims=False):
     """Bitwise reduction (logical OR).
 
@@ -1321,6 +1386,7 @@ def any(x, axis=None, keepdims=False):
     return KerasSymbol(sum0 > 0)
 
 
+@keras_symbol_child
 def all(x, axis=None, keepdims=False):
     """Bitwise reduction (logical AND).
 
@@ -1340,6 +1406,7 @@ def all(x, axis=None, keepdims=False):
     return KerasSymbol(min > 0)
 
 
+@keras_symbol_child
 def argmax(x, axis=-1):
     """Returns the index of the maximum value along an axis.
 
@@ -1356,6 +1423,7 @@ def argmax(x, axis=-1):
     return KerasSymbol(ret)
 
 
+@keras_symbol_child
 def argmin(x, axis=-1):
     """Returns the index of the minimum value along an axis.
 
@@ -1372,12 +1440,14 @@ def argmin(x, axis=-1):
     return KerasSymbol(ret)
 
 
+@keras_symbol_child
 def square(x):
     """Element-wise square.
     """
     return KerasSymbol(mx.sym.square(data=x.symbol))
 
 
+@keras_symbol_child
 def abs(x):
     """Element-wise absolute value.
 
@@ -1390,6 +1460,7 @@ def abs(x):
     return KerasSymbol(mx.sym.abs(data=x.symbol))
 
 
+@keras_symbol_child
 def sqrt(x):
     """Element-wise square root.
 
@@ -1404,6 +1475,7 @@ def sqrt(x):
     return KerasSymbol(ret)
 
 
+@keras_symbol_child
 def exp(x):
     """Element-wise exponential.
 
@@ -1416,6 +1488,7 @@ def exp(x):
     return KerasSymbol(mx.sym.exp(data=x.symbol))
 
 
+@keras_symbol_child
 def log(x):
     """Element-wise log.
 
@@ -1428,6 +1501,7 @@ def log(x):
     return KerasSymbol(mx.sym.log(data=x.symbol))
 
 
+@keras_symbol_child
 def round(x):
     """Element-wise rounding to the closest integer.
 
@@ -1440,6 +1514,7 @@ def round(x):
     return KerasSymbol(mx.sym.round(data=x.symbol))
 
 
+@keras_symbol_child
 def sign(x):
     """Element-wise sign.
 
@@ -1452,6 +1527,7 @@ def sign(x):
     return KerasSymbol(mx.sym.sign(data=x.symbol))
 
 
+@keras_symbol_child
 def pow(x, a):
     """Element-wise exponentiation.
 
@@ -1468,6 +1544,7 @@ def pow(x, a):
     return KerasSymbol(mx.sym.pow(base=x, exp=a))
 
 
+@keras_symbol_child
 def clip(x, min_value, max_value):
     """Element-wise value clipping.
 
@@ -1484,6 +1561,7 @@ def clip(x, min_value, max_value):
     return KerasSymbol(mx.sym.clip(data=x.symbol, a_min=min_value, a_max=max_value))
 
 
+@keras_symbol_child
 def equal(x, y):
     scalar = False
     if isinstance(x, KerasSymbol):
@@ -1497,6 +1575,7 @@ def equal(x, y):
     return KerasSymbol(mx.sym.Cast(mx.sym.broadcast_equal(lhs=x, rhs=y), dtype='uint8'))
 
 
+@keras_symbol_child
 def not_equal(x, y):
     scalar = False
     if isinstance(x, KerasSymbol):
@@ -1510,6 +1589,7 @@ def not_equal(x, y):
     return KerasSymbol(mx.sym.Cast(mx.sym.broadcast_not_equal(lhs=x, rhs=y), dtype='uint8'))
 
 
+@keras_symbol_child
 def greater(x, y):
     scalar = False
     if isinstance(x, KerasSymbol):
@@ -1523,6 +1603,7 @@ def greater(x, y):
     return KerasSymbol(mx.sym.Cast(mx.sym.broadcast_greater(lhs=x, rhs=y), dtype='uint8'))
 
 
+@keras_symbol_child
 def greater_equal(x, y):
     """Element-wise truth value of (x >= y).
 
@@ -1541,6 +1622,7 @@ def greater_equal(x, y):
     return KerasSymbol(mx.sym.Cast(mx.sym.broadcast_greater_equal(lhs=x, rhs=y), dtype='uint8'))
 
 
+@keras_symbol_child
 def lesser(x, y):
     """Element-wise truth value of (x < y).
 
@@ -1559,6 +1641,7 @@ def lesser(x, y):
     return KerasSymbol(mx.sym.Cast(mx.sym.broadcast_lesser(lhs=x, rhs=y), dtype='uint8'))
 
 
+@keras_symbol_child
 def lesser_equal(x, y):
     """Element-wise truth value of (x <= y).
 
@@ -1577,6 +1660,7 @@ def lesser_equal(x, y):
     return KerasSymbol(mx.sym.Cast(mx.sym.broadcast_lesser_equal(lhs=x, rhs=y), dtype='uint8'))
 
 
+@keras_symbol_child
 def maximum(x, y):
     """Element-wise maximum of two tensors.
 
@@ -1590,6 +1674,7 @@ def maximum(x, y):
     return KerasSymbol(mx.sym.maximum(left=x, right=y))
 
 
+@keras_symbol_child
 def minimum(x, y):
     """Element-wise minimum of two tensors.
 
@@ -1603,6 +1688,7 @@ def minimum(x, y):
     return KerasSymbol(mx.sym.minimum(left=x, right=y))
 
 
+@keras_symbol_child
 def sin(x):
     """Computes sin of x element-wise.
 
@@ -1612,6 +1698,7 @@ def sin(x):
     return KerasSymbol(mx.sym.sin(data=x.symbol))
 
 
+@keras_symbol_child
 def cos(x):
     """Computes cos of x element-wise.
 
@@ -1624,6 +1711,7 @@ def cos(x):
     return KerasSymbol(mx.sym.cos(data=x.symbol))
 
 
+@keras_symbol_child
 def normalize_batch_in_training(x, gamma, beta,
                                 reduction_axes, epsilon=1e-3):
     """Computes mean and std for batch then apply batch_normalization on batch.
@@ -1669,6 +1757,7 @@ def normalize_batch_in_training(x, gamma, beta,
     return normed, KerasSymbol(mean), KerasSymbol(var)
 
 
+@keras_symbol_child
 def batch_normalization(x, mean, var, beta, gamma, epsilon=1e-3):
     """Apply batch normalization on x given mean, var, beta and gamma.
     """
@@ -1693,6 +1782,7 @@ def batch_normalization(x, mean, var, beta, gamma, epsilon=1e-3):
 
 
 # SHAPE OPERATIONS
+@keras_symbol_child
 def concatenate(tensors, axis=-1):
     """Concatenates a list of tensors alongside the specified axis.
 
@@ -1705,6 +1795,7 @@ def concatenate(tensors, axis=-1):
     return KerasSymbol(mx.sym.Concat(*tensors, dim=axis))
 
 
+@keras_symbol_child
 def reshape(x, shape):
     """Reshapes a tensor to the specified shape.
 
@@ -1714,6 +1805,7 @@ def reshape(x, shape):
     return KerasSymbol(mx.sym.Reshape(data=x.symbol, shape=shape))
 
 
+@keras_symbol_child
 def permute_dimensions(x, pattern):
     """Permutes axes in a tensor.
 
@@ -1727,6 +1819,7 @@ def permute_dimensions(x, pattern):
     return KerasSymbol(mx.sym.transpose(x.symbol, axes=pattern))
 
 
+@keras_symbol_child
 def resize_images(X, height_factor, width_factor, dim_ordering):
     """Resizes the images contained in a 4D tensor of shape
     - `[batch, channels, height, width]` (for 'th' dim_ordering)
@@ -1740,6 +1833,7 @@ def resize_images(X, height_factor, width_factor, dim_ordering):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def resize_volumes(X, depth_factor, height_factor, width_factor, dim_ordering):
     """Resizes the volume contained in a 5D tensor of shape
     - `[batch, channels, depth, height, width]` (for 'th' dim_ordering)
@@ -1753,6 +1847,7 @@ def resize_volumes(X, depth_factor, height_factor, width_factor, dim_ordering):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def repeat_elements(x, rep, axis):
     """Repeats the elements of a tensor along an axis, like `np.repeat`.
 
@@ -1762,9 +1857,11 @@ def repeat_elements(x, rep, axis):
     # Returns
         A tensor.
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.repeat(x.symbol, repeats=rep, axis=axis))
 
 
+
+@keras_symbol_child
 def repeat(x, n):
     """Repeats a 2D tensor.
 
@@ -1779,6 +1876,7 @@ def repeat(x, n):
     return KerasSymbol(x)
 
 
+@keras_symbol_child
 def arange(start, stop=None, step=1, dtype='int32'):
     """Creates a 1-D tensor containing a sequence of integers.
 
@@ -1793,6 +1891,7 @@ def arange(start, stop=None, step=1, dtype='int32'):
     return KerasSymbol(mx.sym.arange(start=start, stop=stop, step=step, dtype=dtype))
 
 
+@keras_symbol_child
 def tile(x, n):
     """Creates a tensor by tiling `x` by `n`.
 
@@ -1807,15 +1906,17 @@ def tile(x, n):
     return KerasSymbol(mx.sym.tile(x.symbol, reps=n))
 
 
+@keras_symbol_child
 def flatten(x):
     """Flatten a tensor.
 
     # Returns
         A tensor, reshaped into 1-D
     """
-    raise NotImplementedError
+    return KerasSymbol(mx.sym.Reshape(data=x.symbol, shape=(-1,)))
 
 
+@keras_symbol_child
 def batch_flatten(x):
     """Turn a n-D tensor into a 2D tensor where
     the first dimension is conserved.
@@ -1828,6 +1929,7 @@ def batch_flatten(x):
     return KerasSymbol(mx.sym.Flatten(data=x.symbol))
 
 
+@keras_symbol_child
 def expand_dims(x, dim=-1):
     """Adds a 1-sized dimension at index "dim".
 
@@ -1842,6 +1944,7 @@ def expand_dims(x, dim=-1):
         return KerasSymbol(mx.sym.expand_dims(x, axis=dim))
 
 
+@keras_symbol_child
 def squeeze(x, axis):
     """Removes a 1-dimension from the tensor at index "axis".
 
@@ -1856,6 +1959,7 @@ def squeeze(x, axis):
         return KerasSymbol(mx.sym.Reshape(data=x, shape=tuple(shape)))
 
 
+@keras_symbol_child
 def temporal_padding(x, padding=1):
     """Pads the middle dimension of a 3D tensor
     with "padding" zeros left and right.
@@ -1866,6 +1970,7 @@ def temporal_padding(x, padding=1):
     return asymmetric_temporal_padding(x, padding, padding)
 
 
+@keras_symbol_child
 def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
     """Pad the middle dimension of a 3D tensor
     with "left_pad" zeros left and "right_pad" right.
@@ -1879,6 +1984,7 @@ def asymmetric_temporal_padding(x, left_pad=1, right_pad=1):
                                   pad_width=(0, 0, left_pad, right_pad, 0, 0)))
 
 
+@keras_symbol_child
 def spatial_2d_padding(x, padding=(1, 1), dim_ordering='default'):
     """Pads the 2nd and 3rd dimensions of a 4D tensor
     with "padding[0]" and "padding[1]" (resp.) zeros left and right.
@@ -1903,6 +2009,7 @@ def spatial_2d_padding(x, padding=(1, 1), dim_ordering='default'):
                                   pad_width=pattern))
 
 
+@keras_symbol_child
 def asymmetric_spatial_2d_padding(x, top_pad=1, bottom_pad=1,
                                   left_pad=1, right_pad=1,
                                   dim_ordering='default'):
@@ -1933,6 +2040,7 @@ def asymmetric_spatial_2d_padding(x, top_pad=1, bottom_pad=1,
                                   pad_width=pattern))
 
 
+@keras_symbol_child
 def spatial_3d_padding(x, padding=(1, 1, 1), dim_ordering='default'):
     """Pads 5D tensor with zeros for the depth, height, width dimension with
     "padding[0]", "padding[1]" and "padding[2]" (resp.) zeros left and right
@@ -1969,6 +2077,7 @@ def spatial_3d_padding(x, padding=(1, 1, 1), dim_ordering='default'):
                                   pad_width=pattern))
 
 
+@keras_symbol_child
 def stack(x):
     """Stacks a list of rank `R` tensors into a rank `R+1` tensor.
 
@@ -1981,6 +2090,7 @@ def stack(x):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def one_hot(indices, nb_classes):
     """Input: nD integer tensor of shape `(batch_size, dim1, dim2, ... dim(n-1))`
     Output: (n + 1)D one hot representation of the input
@@ -1992,6 +2102,7 @@ def one_hot(indices, nb_classes):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def reverse(x, axes):
     """Reverse a tensor along the the specified axes
 
@@ -2030,13 +2141,9 @@ def set_value(x, value):
     """Sets the value of a variable,
     from a Numpy array. It returns `None`.
     """
-    if _MODEL is not None:
-        _MODEL._sync_weights()
     if isinstance(value, Number):
         value = [value]
     x.bind(mx.nd.array(value))
-    if _MODEL is not None:
-        _MODEL._set_weights()
 
 
 def batch_set_value(tuples):
@@ -2047,16 +2154,8 @@ def batch_set_value(tuples):
         tuples: a list of tuples `(tensor, value)`.
             `value` should be a Numpy array.
     """
-    if _MODEL is not None:
-        _MODEL._sync_weights()
-
     for p, w in tuples:
-        if isinstance(w, Number):
-            w = [w]
-        p.bind(mx.nd.array(w))
-
-    if _MODEL is not None:
-        _MODEL._set_weights()
+        set_value(p, w)
 
 
 def get_variable_shape(x):
@@ -2078,10 +2177,12 @@ def print_tensor(x, message=''):
     print(message, eval(x))
 
 
+@keras_symbol_child
 def group(variables):
     return KerasSymbol(mx.sym.Group([i.symbol for i in variables]))
 
 
+@keras_symbol_child
 def make_loss(variables):
     return KerasSymbol(mx.sym.MakeLoss(variables.symbol))
 
@@ -2129,6 +2230,7 @@ def gradients(loss, variables):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def stop_gradient(variables):
     """Returns `variables` but with zero gradient with respect to every other
     variables.
@@ -2137,6 +2239,7 @@ def stop_gradient(variables):
 
 
 # CONTROL FLOW
+@keras_symbol_child
 def rnn(step_function, inputs, initial_states,
         go_backwards=False, mask=None, constants=None,
         unroll=False, input_length=None):
@@ -2183,34 +2286,36 @@ def rnn(step_function, inputs, initial_states,
     """
     dshape = inputs.get_shape()
     dtype = inputs.get_type()
-    inputs = mx.sym.SliceChannel(inputs.symbol, num_outputs=dshape[1], squeeze_axis=1)
-    inputs = [s for s in inputs]
-    if mask is not None:
-        if mask.dtype != dtype:
-            mask = KerasSymbol(mx.sym.Cast(mask.symbol, dtype=dtype))
-        masks = mx.sym.SliceChannel(mask.symbol, num_outputs=dshape[1], squeeze_axis=1)
-        masks = [KerasSymbol(s) for s in masks]
-    else:
-        masks = [None for _ in inputs]
+    inputs = list(mx.sym.SliceChannel(inputs.symbol, num_outputs=dshape[1], squeeze_axis=1))
     if go_backwards:
         inputs.reverse()
+
+    if mask is not None:
+        if mask.get_type() != dtype:
+            mask = cast(mask, dtype)
+        masks = list(mx.sym.SliceChannel(mask.symbol, num_outputs=dshape[1], squeeze_axis=1))
+    else:
+        masks = [None for _ in inputs]
+
     states = initial_states
     outputs = []
+    prev_output = None
     for i, m in zip(inputs, masks):
         output, new_states = step_function(KerasSymbol(i), states + constants)
         if m is not None:
-            next_states = []
-            for s, ns in zip(states, new_states):
-                bm = mx.sym.Reshape(m.symbol, shape=m.get_shape() + (1,) * (ndim(s) - ndim(m)))
-                bm = mx.sym.broadcast_to(bm, shape=s.get_shape())
-                next_states.append(KerasSymbol((bm == 0) * s.symbol + (bm != 0) * ns.symbol))
-            new_states = next_states
+            new_states = [KerasSymbol(mx.sym.where(m, ns.symbol, s.symbol))
+                          for s, ns in zip(states, new_states)]
+            if prev_output is None:
+                prev_output = zeros_like(output)
+            output = KerasSymbol(mx.sym.where(m, output.symbol, prev_output.symbol))
+            prev_output = output
         states = new_states
         outputs.append(mx.sym.expand_dims(output.symbol, axis=1))
     outputs = mx.sym.Concat(*outputs, dim=1)
     return output, KerasSymbol(outputs), states
 
 
+@keras_symbol_child
 def switch(condition, then_expression, else_expression):
     """Switches between two operations
     depending on a scalar value (`int` or `bool`).
@@ -2228,6 +2333,7 @@ def switch(condition, then_expression, else_expression):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def in_train_phase(x, alt):
     """Selects `x` in train phase, and `alt` otherwise.
     Note that `alt` should have the *same shape* as `x`.
@@ -2237,12 +2343,13 @@ def in_train_phase(x, alt):
             return x
         return x()
     if learning_phase() is 0:
-        if isinstance(x, KerasSymbol):
+        if isinstance(alt, KerasSymbol):
             return alt
         return alt()
     raise AssertionError("Learning phase must be 0 or 1")
 
 
+@keras_symbol_child
 def in_test_phase(x, alt):
     '''Selects `x` in test phase, and `alt` otherwise.
     Note that `alt` should have the *same shape* as `x`.
@@ -2272,6 +2379,7 @@ def _relu(x, alpha):
     return f1 * x + f2 * mx.sym.abs(x)
 
 
+@keras_symbol_child
 def relu(x, alpha=0., max_value=None):
     """Rectified linear unit
     # Arguments
@@ -2295,6 +2403,7 @@ def relu(x, alpha=0., max_value=None):
     return KerasSymbol(ret)
 
 
+@keras_symbol_child
 def elu(x, alpha=1.):
     """Exponential linear unit.
 
@@ -2308,6 +2417,7 @@ def elu(x, alpha=1.):
     return KerasSymbol(mx.sym.LeakyReLU(data=x.symbol, act_type='elu', slope=alpha))
 
 
+@keras_symbol_child
 def softmax(x):
     """Softmax of a tensor.
 
@@ -2321,6 +2431,7 @@ def softmax(x):
         mx.sym.SoftmaxActivation(data=x.symbol))
 
 
+@keras_symbol_child
 def softplus(x):
     """Softplus of a tensor.
 
@@ -2333,6 +2444,7 @@ def softplus(x):
     return KerasSymbol(mx.sym.Activation(data=x.symbol, act_type='softrelu'))
 
 
+@keras_symbol_child
 def softsign(x):
     """Softsign of a tensor.
 
@@ -2346,6 +2458,7 @@ def softsign(x):
         x.symbol / (1 + mx.sym.abs(x.symbol)))
 
 
+@keras_symbol_child
 def categorical_crossentropy(output, target, from_logits=False):
     assert not from_logits
     axis = ndim(output) - 1
@@ -2355,6 +2468,7 @@ def categorical_crossentropy(output, target, from_logits=False):
     return KerasSymbol(output)
 
 
+@keras_symbol_child
 def sparse_categorical_crossentropy(output, target, from_logits=False):
     """Categorical crossentropy between an output tensor
     and a target tensor, where the target is an integer tensor.
@@ -2363,6 +2477,7 @@ def sparse_categorical_crossentropy(output, target, from_logits=False):
     return KerasSymbol(output)
 
 
+@keras_symbol_child
 def binary_crossentropy(output, target, from_logits=False):
     """Binary crossentropy between an output tensor and a target tensor.
 
@@ -2383,6 +2498,7 @@ def binary_crossentropy(output, target, from_logits=False):
     return KerasSymbol(output)
 
 
+@keras_symbol_child
 def sigmoid(x):
     """Element-wise sigmoid.
 
@@ -2395,6 +2511,7 @@ def sigmoid(x):
     return KerasSymbol(mx.sym.Activation(data=x.symbol, act_type='sigmoid'))
 
 
+@keras_symbol_child
 def hard_sigmoid(x):
     """Segment-wise linear approximation of sigmoid.
     Faster than sigmoid.
@@ -2411,6 +2528,7 @@ def hard_sigmoid(x):
         mx.sym.clip(data=(0.2 * x.symbol + 0.5), a_min=0, a_max=1))
 
 
+@keras_symbol_child
 def tanh(x):
     """Element-wise tanh.
 
@@ -2423,6 +2541,7 @@ def tanh(x):
     return KerasSymbol(mx.sym.tanh(data=x.symbol))
 
 
+@keras_symbol_child
 def dropout(x, level, noise_shape=None, seed=None):
     """Sets entries in `x` to zero at random,
     while scaling the entire tensor.
@@ -2441,6 +2560,7 @@ def dropout(x, level, noise_shape=None, seed=None):
         mx.sym.Dropout(data=x.symbol, p=level))
 
 
+@keras_symbol_child
 def l2_normalize(x, axis):
     """Normalizes a tensor wrt the L2 norm alongside the specified axis.
 
@@ -2457,6 +2577,7 @@ def l2_normalize(x, axis):
     return KerasSymbol(mx.sym.broadcast_div(x.symbol, norm))
 
 
+@keras_symbol_child
 def in_top_k(predictions, targets, k):
     """Returns whether the `targets` are in the top `k` `predictions`
 
@@ -2476,6 +2597,7 @@ def in_top_k(predictions, targets, k):
 
 
 # CONVOLUTIONS
+@keras_symbol_child
 def _preprocess_conv2d_input(x, dim_ordering):
     if dim_ordering == 'tf':
         # TF uses the last dimension as channel dimension,
@@ -2486,6 +2608,7 @@ def _preprocess_conv2d_input(x, dim_ordering):
     return x
 
 
+@keras_symbol_child
 def _preprocess_conv2d_kernel(kernel, dim_ordering):
     if dim_ordering == 'tf':
         # TF uses the last dimension as channel dimension,
@@ -2496,6 +2619,7 @@ def _preprocess_conv2d_kernel(kernel, dim_ordering):
     return kernel
 
 
+@keras_symbol_child
 def _postprocess_conv2d_output(x, dim_ordering):
     if dim_ordering == 'tf':
         x = KerasSymbol(mx.sym.transpose(x.symbol, axes=(0, 2, 3, 1)))
@@ -2528,6 +2652,7 @@ def _preprocess_border_mode(border_mode, input_shape, kernel, strides, dilation)
     return padding
 
 
+@keras_symbol_child
 def conv1d(x, kernel, stride=1, border_mode='valid',
            image_shape=None, filter_shape=None):
     """1D convolution.
@@ -2543,6 +2668,7 @@ def conv1d(x, kernel, stride=1, border_mode='valid',
     raise NotImplementedError
 
 
+@keras_symbol_child
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
            dim_ordering='default',
            image_shape=None, filter_shape=None, filter_dilation=(1, 1)):
@@ -2570,6 +2696,7 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     return out
 
 
+@keras_symbol_child
 def deconv2d(x, kernel, output_shape, strides=(1, 1),
              border_mode='valid',
              dim_ordering='default',
@@ -2595,6 +2722,7 @@ def deconv2d(x, kernel, output_shape, strides=(1, 1),
     return KerasSymbol(s)
 
 
+@keras_symbol_child
 def atrous_conv2d(x, kernel, rate=1,
                   border_mode='valid',
                   dim_ordering='default',
@@ -2618,6 +2746,7 @@ def atrous_conv2d(x, kernel, rate=1,
     raise NotImplementedError
 
 
+@keras_symbol_child
 def separable_conv2d(x, depthwise_kernel, pointwise_kernel, strides=(1, 1),
                      border_mode='valid', dim_ordering='default'):
     """2-D convolution with separable filters.
@@ -2625,6 +2754,7 @@ def separable_conv2d(x, depthwise_kernel, pointwise_kernel, strides=(1, 1),
     raise NotImplementedError
 
 
+@keras_symbol_child
 def conv3d(x, kernel, strides=(1, 1, 1),
            border_mode='valid', dim_ordering='default',
            volume_shape=None, filter_shape=None):
@@ -2647,6 +2777,7 @@ def conv3d(x, kernel, strides=(1, 1, 1),
     return KerasSymbol(s)
 
 
+@keras_symbol_child
 def pool2d(x, pool_size, strides=(1, 1),
            border_mode='valid', dim_ordering='default',
            pool_mode='max'):
@@ -2667,6 +2798,7 @@ def pool2d(x, pool_size, strides=(1, 1),
     return KerasSymbol(s)
 
 
+@keras_symbol_child
 def pool3d(x, pool_size, strides=(1, 1, 1), border_mode='valid',
            dim_ordering='default', pool_mode='max'):
     """3D Pooling.
@@ -2687,6 +2819,7 @@ def pool3d(x, pool_size, strides=(1, 1, 1), border_mode='valid',
     return KerasSymbol(s)
 
 
+@keras_symbol_child
 def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
     """Returns a tensor with normal distribution
 
@@ -2712,6 +2845,7 @@ def random_normal(shape, mean=0.0, std=1.0, dtype=None, seed=None):
     return ret
 
 
+@keras_symbol_child
 def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     """Returns a tensor with uniform distribution
 
@@ -2738,6 +2872,7 @@ def random_uniform(shape, low=0.0, high=1.0, dtype=None, seed=None):
     return ret
 
 
+@keras_symbol_child
 def random_binomial(shape, p=0.0, dtype=None, seed=None):
     """Returns a tensor with binomlai distribution
 
@@ -2754,14 +2889,17 @@ def random_binomial(shape, p=0.0, dtype=None, seed=None):
 
 
 # CTC
+@keras_symbol_child
 def ctc_label_dense_to_sparse(labels, label_lengths):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def ctc_batch_cost(y_true, y_pred, input_length, label_length):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def ctc_decode(y_pred, input_length, greedy=True, beam_width=100,
                top_paths=1):
     """Decodes the output of a softmax using either
@@ -2790,6 +2928,7 @@ def ctc_decode(y_pred, input_length, greedy=True, beam_width=100,
 
 
 # HIGH ORDER FUNCTIONS
+@keras_symbol_child
 def map_fn(fn, elems, name=None):
     """Map the function fn over the elements elems and return the outputs.
 
@@ -2805,6 +2944,7 @@ def map_fn(fn, elems, name=None):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def foldl(fn, elems, initializer=None, name=None):
     """Reduce elems using fn to combine them from left to right.
 
@@ -2821,6 +2961,7 @@ def foldl(fn, elems, initializer=None, name=None):
     raise NotImplementedError
 
 
+@keras_symbol_child
 def foldr(fn, elems, initializer=None, name=None):
     """Reduce elems using fn to combine them from right to left.
 
@@ -2888,14 +3029,16 @@ def dfs_get_bind_values(node_start):
         bind_values.update(key.get_bind_values())
     return bind_values
 
-import types
-items = dict(globals().items())
-for k, v in items.items():
-    if k == "keras_symbol_child":
-        continue
-    if k == "for_all_methods":
-        continue
-    if k == "dfs_get_bind_values":
-        continue
-    if isinstance(v, types.FunctionType):
-        globals()[k] = keras_symbol_child(v)
+# import types
+# items = dict(globals().items())
+# for k, v in items.items():
+#     if k in ["keras_symbol_child", "for_all_methods", "dfs_get_bind_values",
+#              "set_model", "clear_session", "learning_phase", "set_learning_phase",
+#              "KerasVariable", "variable", "placeholder", "zeros", "ones", "eye",
+#              "zeros_like", "ones_like", "random_uniform_variable", "random_normal_variable",
+#              "shape", "dtype", "get_value", "batch_get_value", "set_value", "batch_set_value",
+#              "get_variable_shape", "print_tensor", "function", "gradients", "count_params",
+#              "ndim", "int_shape", "_autogen_name"]:
+#         continue
+#     if isinstance(v, types.FunctionType):
+#         globals()[k] = keras_symbol_child(v)

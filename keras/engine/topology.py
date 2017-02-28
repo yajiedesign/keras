@@ -2117,6 +2117,18 @@ class Container(Layer):
                 layer.reset_states()
 
     @property
+    def states(self):
+        """Returns the `states` from all layers that are
+        stateful.
+        """
+        states = []
+        for layer in self.layers:
+            if getattr(layer, 'stateful', False):
+                if hasattr(layer, 'states'):
+                    states += layer.states
+        return states
+
+    @property
     def state_updates(self):
         """Returns the `updates` from all layers that are
         stateful.  This is useful for separating training updates and
